@@ -1,0 +1,20 @@
+workflows:
+  ios-release-workflow:
+    name: iOS Release
+    instance_type: mac_mini_m1
+    environment:
+      flutter: stable
+      vars:
+        APP_NAME: "Runner"
+    scripts:
+      - name: Install dependencies
+        script: |
+          flutter pub get
+      - name: Build iOS IPA
+        script: |
+          flutter build ipa --export-method development
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      testflight:
+        enable: true
