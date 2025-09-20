@@ -36,7 +36,7 @@ class _CraftingScreenState extends State<CraftingScreen> {
       body: Consumer<GameProvider>(
         builder: (context, gameProvider, child) {
           try {
-            final availableDessertsToShow = CraftableDessert.dessertRecipes;
+            final availableDessertsToShow = CraftableDessert.getAvailableRecipes(gameProvider.shopLevel);
             
             if (availableDessertsToShow.isEmpty) {
               return _buildNoRecipesAvailable();
@@ -421,6 +421,7 @@ class _CraftingScreenState extends State<CraftingScreen> {
                           MaterialPageRoute(
                             builder: (context) => MatchGameScreen(
                               dessertToCraft: dessert,
+                              shopLevel: gameProvider.shopLevel,
                               onIngredientConsume: () {
                                 // Consume ingredients regardless of game outcome
                                 final consumed = gameProvider.consumeIngredientsForMatchGame(dessert.id);

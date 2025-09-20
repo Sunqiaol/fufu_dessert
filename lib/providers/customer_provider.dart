@@ -1,22 +1,25 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:fufu_dessert2/models/customer.dart';
 import 'package:fufu_dessert2/models/dessert.dart';
 import 'package:fufu_dessert2/models/furniture.dart';
+import 'package:fufu_dessert2/models/craftable_dessert.dart';
 import 'package:fufu_dessert2/services/audio_service.dart';
 
 class CustomerProvider with ChangeNotifier {
   // Base values - will be scaled by shop level
   static const int baseMaxCustomers = 4;
   static const int baseCustomerSpawnInterval = 10; // seconds
+  static const int autoFeedDelaySeconds = 8; // Auto-feed delay in seconds - OPTIMIZED
   
   List<Customer> _customers = [];
   Timer? _spawnTimer;
   Timer? _updateTimer;
+  Timer? _autoFeedTimer;
   final math.Random _random = math.Random();
   int _shopLevel = 1; // Track current shop level
+  final Map<String, DateTime> _customerOrderTime = {}; // Track when customers started ordering
   
   List<Customer> get customers => _customers;
   int get customerCount => _customers.length;
@@ -85,28 +88,81 @@ class CustomerProvider with ChangeNotifier {
 
   void _startCustomerUpdates() {
     _updateTimer = Timer.periodic(
-      const Duration(milliseconds: 16), // ~60 FPS
+      const Duration(milliseconds: 100), // 10 FPS - MEMORY OPTIMIZED
       (_) => _updateCustomers(),
+    );
+    
+    // Start auto-feeding timer
+    _startAutoFeeding();
+  }
+  
+  void _startAutoFeeding() {
+    _autoFeedTimer = Timer.periodic(
+      const Duration(seconds: 2), // Check every 2 seconds
+      (_) => _checkAutoFeed(),
     );
   }
 
   void _trySpawnCustomer() {
-    if (_customers.length < maxCustomers) {
-      _spawnCustomer();
+    // Check if store is open before spawning new customers
+    final bool isStoreOpen = getIsStoreOpenCallback?.call() ?? true;
+    
+    if (!isStoreOpen) {
+      // Store is closed - no new customers can enter
+      return;
     }
+    
+    // STRICT ENFORCEMENT: Only allow customers up to available seating capacity
+    final currentCustomers = _customers.length;
+    final availableSeats = maxCustomers;
+    
+    if (currentCustomers >= availableSeats) {
+      // No available seats - no new customers allowed
+      debugPrint('🚫 Cannot spawn customer: cafe at full capacity ($currentCustomers/$availableSeats)');
+      return;
+    }
+    
+    _spawnCustomer();
   }
 
   void _spawnCustomer() {
-    final customer = Customer.generateRandomCustomer();
+    // DOUBLE-CHECK: Ensure we still have capacity before spawning
+    if (_customers.length >= maxCustomers) {
+      debugPrint('🚫 Spawn cancelled: capacity reached during spawn process (${_customers.length}/$maxCustomers)');
+      return;
+    }
     
-    // Set spawn position (entrance)
-    customer.x = 0.0;
-    customer.y = 5.0;
-    customer.targetX = 2.0 + _random.nextDouble() * 6.0;
-    customer.targetY = 3.0 + _random.nextDouble() * 4.0;
+    // Sync check: if GameProvider has a different level, update ours
+    if (getCurrentShopLevelCallback != null) {
+      final actualLevel = getCurrentShopLevelCallback!();
+      if (actualLevel != _shopLevel) {
+        debugPrint('🔧 SYNC FIX: CustomerProvider level was $_shopLevel, GameProvider is $actualLevel - syncing now!');
+        _shopLevel = actualLevel;
+      }
+    }
+    
+    final customer = Customer.generateRandomCustomer(shopLevel: _shopLevel);
+
+    // Use boundary-constrained positions
+    final validBounds = _getFloorGridBounds();
+    final enterPos = _getRandomValidPosition(validBounds);
+    final targetPos = _getRandomValidPosition(validBounds);
+
+    // Set spawn position within floor boundaries
+    customer.x = enterPos.dx;
+    customer.y = enterPos.dy;
+    customer.targetX = targetPos.dx;
+    customer.targetY = targetPos.dy;
     customer.state = CustomerState.entering;
     
+    // FINAL SAFETY CHECK: Ensure we don't exceed capacity
+    if (_customers.length >= maxCustomers) {
+      debugPrint('🚫 Customer rejected at final check: capacity full (${_customers.length}/$maxCustomers)');
+      return;
+    }
+    
     _customers.add(customer);
+    debugPrint('✅ Customer spawned: ${customer.name} ${customer.emoji} (${_customers.length}/$maxCustomers)');
     
     // Play customer enter sound effect
     AudioService().playSoundEffect(SoundEffect.customerEnter);
@@ -118,20 +174,24 @@ class CustomerProvider with ChangeNotifier {
   }
 
   void _scheduleCustomerBehavior(Customer customer) {
-    // Enter -> Browse (2-3 seconds)
-    Timer(Duration(seconds: 2 + _random.nextInt(2)), () {
+    // Enter -> Browse (1.5 seconds - OPTIMIZED)
+    Timer(Duration(milliseconds: 1500), () {
       if (_customers.contains(customer) && customer.state == CustomerState.entering) {
-        customer.state = CustomerState.browsing;
+        customer.state = CustomerState.walkingToCounter;
         _moveCustomerToBrowse(customer);
         notifyListeners();
       }
     });
     
-    // Browse -> Order (3-5 seconds)
-    Timer(Duration(seconds: 5 + _random.nextInt(3)), () {
-      if (_customers.contains(customer) && customer.state == CustomerState.browsing) {
+    // Browse -> Order (3-5 seconds - OPTIMIZED)
+    Timer(Duration(seconds: 3 + _random.nextInt(3)), () {
+      if (_customers.contains(customer) && customer.state == CustomerState.walkingToCounter) {
         customer.state = CustomerState.ordering;
         _moveCustomerToOrder(customer);
+        // Track when customer started ordering for auto-feed
+        _customerOrderTime[customer.id] = DateTime.now();
+        // Play doorbell sound when customer places an order
+        AudioService().playSoundEffect(SoundEffect.doorbell);
         notifyListeners();
       }
     });
@@ -146,8 +206,8 @@ class CustomerProvider with ChangeNotifier {
   }
 
   void _moveCustomerToOrder(Customer customer) {
-    // Move to cash register area
-    customer.setTarget(2.0, 2.5);
+    // Move to cash register area (front counter)
+    customer.setTarget(9.0 + _random.nextDouble() * 2.0, 4.0 + _random.nextDouble() * 2.0);
     
     // Generate an order
     customer.orderLevel = customer.preferredDesserts.isNotEmpty 
@@ -201,39 +261,76 @@ class CustomerProvider with ChangeNotifier {
     // Customer is satisfied!
     final satisfaction = 1.0; // Perfect satisfaction for exact match
     
-    // Play serve sound effect
-    AudioService().playSoundEffect(SoundEffect.serve);
+    // Calculate payment with patience-based reward multiplier
+    int basePayment;
+    if (customer.orderType == OrderType.craftedDessert && customer.orderCraftedDessertId != null) {
+      final craftedDessert = CraftableDessert.getDessertById(customer.orderCraftedDessertId!);
+      basePayment = craftedDessert?.baseValue ?? 50;
+    } else {
+      final dessert = Dessert.getDessertByLevel(customer.orderLevel ?? 1);
+      basePayment = dessert.baseValue;
+    }
     
-    // Try to assign a table to the customer
-    final hasTable = _assignTableToCustomer(customerId);
+    final rewardMultiplier = customer.rewardMultiplier;
+    final payment = (basePayment * satisfaction * rewardMultiplier).round();
     
-    if (hasTable) {
-      // Customer successfully got a table - they will eat
-      // Schedule leaving after eating
-      Timer(Duration(seconds: 5 + _random.nextInt(6)), () {
-        if (_customers.contains(customer)) {
-          _releaseTableFromCustomer(customerId);
-          customer.state = CustomerState.leaving;
-          _moveCustomerToExit(customer);
+    // Debug payment calculation
+    debugPrint('💰 Payment Debug: basePayment=$basePayment, satisfaction=$satisfaction, rewardMultiplier=$rewardMultiplier, finalPayment=$payment, patience=${customer.patience}');
+    
+    // Notify game provider about payment
+    if (onCustomerServedCallback != null) {
+      onCustomerServedCallback!(payment, satisfaction > 0.7);
+    }
+    
+    // Play money merge sound effect when successfully serving customer
+    AudioService().playSoundEffect(SoundEffect.moneyMerge);
+    
+    // First, customer goes to waiting state (food is being prepared)
+    final waitingCustomerIndex = _customers.indexWhere((c) => c.id == customerId);
+    if (waitingCustomerIndex != -1) {
+      _customers[waitingCustomerIndex] = _customers[waitingCustomerIndex].copyWith(state: CustomerState.sitting);
+      notifyListeners();
+    }
+    
+    // After a short wait, try to assign a table and start eating
+    Timer(Duration(seconds: 1 + _random.nextInt(2)), () {
+      final hasTable = _assignTableToCustomer(customerId);
+      
+      if (hasTable) {
+        // Customer successfully got a table and food - now they eat
+        // Schedule leaving after eating (1-3 seconds - OPTIMIZED)
+        Timer(Duration(seconds: 1 + _random.nextInt(3)), () {
+          final customerIndex = _customers.indexWhere((c) => c.id == customerId);
+          if (customerIndex != -1) {
+            final currentCustomer = _customers[customerIndex];
+            _releaseTableFromCustomer(customerId);
+            _customers[customerIndex] = currentCustomer.copyWith(state: CustomerState.leaving);
+            _moveCustomerToExit(_customers[customerIndex]);
+            notifyListeners();
+            
+            Timer(const Duration(seconds: 2), () {
+              _customers.removeWhere((c) => c.id == customerId);
+              notifyListeners();
+            });
+          }
+        });
+      } else {
+        // No table available but they got their dessert - they leave happy but quickly
+        final customerIndex = _customers.indexWhere((c) => c.id == customerId);
+        if (customerIndex != -1) {
+          _customers[customerIndex] = _customers[customerIndex].copyWith(state: CustomerState.leaving);
+          _moveCustomerToExit(_customers[customerIndex]);
+          notifyListeners();
           
           Timer(const Duration(seconds: 2), () {
-            _customers.remove(customer);
+            _customers.removeWhere((c) => c.id == customerId);
+            // Play customer leave sound effect
+            AudioService().playSoundEffect(SoundEffect.customerLeave);
             notifyListeners();
           });
         }
-      });
-    } else {
-      // No table available but they got their dessert - they leave happy but quickly
-      customer.state = CustomerState.leaving;
-      _moveCustomerToExit(customer);
-      
-      Timer(const Duration(seconds: 2), () {
-        _customers.remove(customer);
-        // Play customer leave sound effect
-        AudioService().playSoundEffect(SoundEffect.customerLeave);
-        notifyListeners();
-      });
-    }
+      }
+    });
     
     notifyListeners();
     return true;
@@ -269,120 +366,144 @@ class CustomerProvider with ChangeNotifier {
     // Customer is satisfied!
     final satisfaction = 1.0; // Perfect satisfaction for exact match
     
-    // Calculate payment
+    // Calculate payment with patience-based reward multiplier
     final dessert = Dessert.getDessertByLevel(dessertLevel);
     final basePayment = dessert.baseValue;
-    final payment = (basePayment * satisfaction).round();
+    final rewardMultiplier = customer.rewardMultiplier;
+    final payment = (basePayment * satisfaction * rewardMultiplier).round();
     
     // Notify game provider about payment
     if (onCustomerServedCallback != null) {
       onCustomerServedCallback!(payment, satisfaction > 0.7);
     }
     
-    // Play serve sound effect
-    AudioService().playSoundEffect(SoundEffect.serve);
+    // Play money merge sound effect when successfully serving customer
+    AudioService().playSoundEffect(SoundEffect.moneyMerge);
     
-    // Try to assign a table to the customer
-    final hasTable = _assignTableToCustomer(customerId);
+    // First, customer goes to waiting state (food is being prepared)
+    final waitingCustomerIndex = _customers.indexWhere((c) => c.id == customerId);
+    if (waitingCustomerIndex != -1) {
+      _customers[waitingCustomerIndex] = _customers[waitingCustomerIndex].copyWith(state: CustomerState.sitting);
+      notifyListeners();
+    }
+    
+    // After a short wait, try to assign a table and start eating
+    Timer(Duration(seconds: 1 + _random.nextInt(2)), () {
+      final hasTable = _assignTableToCustomer(customerId);
     
     if (hasTable) {
       // Customer successfully got a table - they will eat
-      customer.state = CustomerState.eating;
+      // Note: _assignTableToCustomer already sets state to eating
       
-      // Schedule leaving after eating
-      Timer(Duration(seconds: 5 + _random.nextInt(6)), () {
-        if (_customers.contains(customer)) {
+      // Schedule leaving after eating (1-3 seconds - OPTIMIZED)
+      Timer(Duration(seconds: 1 + _random.nextInt(3)), () {
+        final customerIndex = _customers.indexWhere((c) => c.id == customerId);
+        if (customerIndex != -1) {
+          final currentCustomer = _customers[customerIndex];
           _releaseTableFromCustomer(customerId);
-          customer.state = CustomerState.leaving;
-          _moveCustomerToExit(customer);
+          _customers[customerIndex] = currentCustomer.copyWith(state: CustomerState.leaving);
+          _moveCustomerToExit(_customers[customerIndex]);
+          notifyListeners();
           
           Timer(const Duration(seconds: 2), () {
-            _customers.remove(customer);
+            _customers.removeWhere((c) => c.id == customerId);
             notifyListeners();
           });
         }
       });
-    } else {
-      // No table available but they got their dessert - they leave happy but quickly
-      customer.state = CustomerState.leaving;
-      _moveCustomerToExit(customer);
-      
-      Timer(const Duration(seconds: 2), () {
-        _customers.remove(customer);
-        // Play customer leave sound effect
-        AudioService().playSoundEffect(SoundEffect.customerLeave);
-        notifyListeners();
-      });
-    }
+      } else {
+        // No table available but they got their dessert - they leave happy but quickly
+        final customerIndex = _customers.indexWhere((c) => c.id == customerId);
+        if (customerIndex != -1) {
+          _customers[customerIndex] = _customers[customerIndex].copyWith(state: CustomerState.leaving);
+          _moveCustomerToExit(_customers[customerIndex]);
+          notifyListeners();
+          
+          Timer(const Duration(seconds: 2), () {
+            _customers.removeWhere((c) => c.id == customerId);
+            // Play customer leave sound effect
+            AudioService().playSoundEffect(SoundEffect.customerLeave);
+            notifyListeners();
+          });
+        }
+      }
+    });
     
     notifyListeners();
     return true;
   }
 
-  double _calculateSatisfaction(int expectedLevel, int actualLevel) {
-    if (actualLevel >= expectedLevel) {
-      return 1.0; // Perfect satisfaction
-    } else if (actualLevel >= expectedLevel - 1) {
-      return 0.8; // Good satisfaction
-    } else if (actualLevel >= expectedLevel - 2) {
-      return 0.5; // Okay satisfaction
-    } else {
-      return 0.2; // Poor satisfaction
-    }
-  }
-
-  int _calculatePayment(int dessertLevel, double satisfaction) {
-    final basePay = Dessert.getDessertByLevel(dessertLevel).baseValue;
-    return (basePay * satisfaction * (0.8 + _random.nextDouble() * 0.4)).round();
-  }
-
-
   void _moveCustomerToExit(Customer customer) {
-    customer.setTarget(0.0, 5.0);
+    // Exit through the top of the store (same as entrance)
+    customer.setTarget(8.0 + _random.nextDouble() * 4.0, 0.0);
   }
 
   void _updateCustomers() {
-    final deltaTime = 1 / 60.0; // Assuming 60 FPS
+    final deltaTime = 0.1; // 10 FPS - MEMORY OPTIMIZED
     
     for (final customer in _customers.toList()) {
       // Update position
       customer.updatePosition(deltaTime);
       
-      // Decrease patience
-      if (customer.state == CustomerState.ordering || customer.state == CustomerState.waiting) {
-        if (_random.nextDouble() < 0.01) { // 1% chance per frame
-          customer.decreasePatience();
-          
-          if (customer.hasLeftCafe()) {
-            customer.state = CustomerState.leaving;
-            _moveCustomerToExit(customer);
-            
-            Timer(const Duration(seconds: 2), () {
-              _customers.remove(customer);
-              notifyListeners();
-            });
-          }
-        }
+      // Update patience system
+      customer.updatePatience(deltaTime);
+      
+      // Handle impatient customers
+      if (customer.isLeaving && customer.state != CustomerState.leaving) {
+        customer.state = CustomerState.leaving;
+        _moveCustomerToExit(customer);
+        
+        // Apply timeout penalty
+        onCustomerTimeoutCallback?.call(customer.patience);
+        
+        // Customer left without being served - lose satisfaction/reputation
+        onCustomerServedCallback?.call(0, false);
+        
+        Timer(const Duration(seconds: 2), () {
+          _customers.remove(customer);
+          notifyListeners();
+        });
       }
     }
     
     notifyListeners();
   }
 
-  void _onCustomerServed(int payment, bool wasHappy) {
-    // This would normally call back to GameProvider
-    // For now, we'll implement this as a callback system
-    onCustomerServedCallback?.call(payment, wasHappy);
-  }
 
   // Callback for when customer is served (to be set by GameProvider)
   Function(int payment, bool wasHappy)? onCustomerServedCallback;
+  
+  // Callback for when customer times out (to be set by GameProvider)
+  Function(int patienceRemaining)? onCustomerTimeoutCallback;
+
+  // Floor boundary helpers to constrain customers within floor area
+  Rect _getFloorGridBounds() {
+    // Ultra-conservative bounds that are definitely within the red floor outline center
+    // Using only the very center of the diamond-shaped floor area to ensure visibility
+    return const Rect.fromLTWH(12.0, 12.5, 3.0, 2.0); // x: 12-15, y: 12.5-14.5 (tiny central area)
+  }
+
+  Offset _getRandomValidPosition(Rect bounds) {
+    return Offset(
+      bounds.left + _random.nextDouble() * bounds.width,
+      bounds.top + _random.nextDouble() * bounds.height,
+    );
+  }
+
+  // Callback to get current shop level from GameProvider (fallback sync)
+  int Function()? getCurrentShopLevelCallback;
+  
+  // Callback to check if store is open (from GameProvider)
+  bool Function()? getIsStoreOpenCallback;
   
   // Callback to serve merged dessert from storage (to be set by GameProvider)
   bool Function(int dessertLevel)? serveDessertCallback;
   
   // Callback to serve crafted dessert from storage (to be set by GameProvider)
   bool Function(int dessertId)? serveCraftedDessertCallback;
+  
+  // Callback to check if storage has crafted items available (to be set by GameProvider)
+  bool Function(int dessertId)? hasStorageCraftedItemCallback;
 
   Customer? getCustomerAt(double x, double y) {
     for (final customer in _customers) {
@@ -398,8 +519,34 @@ class CustomerProvider with ChangeNotifier {
     return _customers.where((c) => c.state == CustomerState.ordering).toList();
   }
 
+  // Check if any ordering customer wants a specific merged dessert level
+  bool isAnyCustomerWantingLevel(int level) {
+    return _customers.any((customer) => 
+      customer.state == CustomerState.ordering && 
+      customer.orderType == OrderType.mergedDessert && 
+      customer.orderLevel == level
+    );
+  }
+
+  // Check if any ordering customer wants a specific crafted dessert
+  bool isAnyCustomerWantingCraftedDessert(int craftedDessertId) {
+    return _customers.any((customer) => 
+      customer.state == CustomerState.ordering && 
+      customer.orderType == OrderType.craftedDessert && 
+      customer.orderCraftedDessertId == craftedDessertId
+    );
+  }
+
   void removeAllCustomers() {
+    debugPrint('🔄 CustomerProvider: Removing all customers (${_customers.length} total)');
     _customers.clear();
+    debugPrint('🔄 CustomerProvider: All customers removed - notifying listeners');
+    notifyListeners();
+  }
+  
+  // Force update of customer limits when seating capacity changes
+  void updateSeatingCapacity() {
+    debugPrint('🪑 CustomerProvider: Seating capacity updated - new max customers: $maxCustomers');
     notifyListeners();
   }
 
@@ -569,6 +716,48 @@ class CustomerProvider with ChangeNotifier {
     }
   }
   
+  // Check for customers that should be auto-fed from storage
+  void _checkAutoFeed() {
+    final now = DateTime.now();
+    
+    for (final customer in _customers.toList()) {
+      if (customer.state == CustomerState.ordering) {
+        final orderTime = _customerOrderTime[customer.id];
+        if (orderTime != null) {
+          final waitingTime = now.difference(orderTime).inSeconds;
+          
+          // Auto-feed after specified delay - ONLY for crafted desserts from storage
+          if (waitingTime >= autoFeedDelaySeconds && customer.orderType == OrderType.craftedDessert) {
+            bool canAutoFeed = false;
+            
+            // Check if storage has the required crafted dessert
+            if (customer.orderCraftedDessertId != null) {
+              canAutoFeed = hasStorageCraftedItemCallback?.call(customer.orderCraftedDessertId!) ?? false;
+            }
+            
+            if (canAutoFeed) {
+              final orderInfo = customer.orderType == OrderType.craftedDessert 
+                ? 'crafted dessert ID ${customer.orderCraftedDessertId}' 
+                : 'merged dessert level ${customer.orderLevel}';
+              debugPrint('🤖 AUTO-FEED: Attempting to serve customer ${customer.id} with $orderInfo after ${waitingTime}s wait');
+              // Auto-serve the customer from storage
+              final success = serveCustomerFromStorage(customer.id);
+              if (success) {
+                // Remove from tracking since they've been served
+                _customerOrderTime.remove(customer.id);
+              } else {
+              }
+            }
+          }
+        }
+      } else {
+        // Remove from tracking if customer is no longer ordering
+        _customerOrderTime.remove(customer.id);
+      }
+    }
+  }
+  
+  // Helper math functions for positioning
   double cos(double angle) => math.cos(angle);
   double sin(double angle) => math.sin(angle);
   
@@ -584,8 +773,27 @@ class CustomerProvider with ChangeNotifier {
 
   @override
   void dispose() {
+    // MEMORY CLEANUP: Cancel all timers
     _spawnTimer?.cancel();
     _updateTimer?.cancel();
+    _autoFeedTimer?.cancel();
+    
+    // MEMORY CLEANUP: Clear all collections
+    _customers.clear();
+    _customerOrderTime.clear();
+    
+    // MEMORY CLEANUP: Null callbacks to prevent retention
+    onCustomerServedCallback = null;
+    onCustomerTimeoutCallback = null;
+    getCurrentShopLevelCallback = null;
+    getIsStoreOpenCallback = null;
+    serveDessertCallback = null;
+    serveCraftedDessertCallback = null;
+    hasStorageCraftedItemCallback = null;
+    getFurnitureAttraction = null;
+    getSeatingCapacity = null;
+    getSeatingFurniture = null;
+    
     super.dispose();
   }
 }

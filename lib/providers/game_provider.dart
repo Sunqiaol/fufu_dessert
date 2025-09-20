@@ -1,16 +1,19 @@
 import 'dart:async';
-import 'dart:math';
+import 'dart:math' as math;
+import 'dart:math' show Point;
 import 'package:flutter/foundation.dart';
-import 'package:collection/collection.dart';
+import 'package:flutter/material.dart';
 import 'package:fufu_dessert2/models/dessert.dart';
 import 'package:fufu_dessert2/models/storage.dart';
 import 'package:fufu_dessert2/models/craftable_dessert.dart';
 import 'package:fufu_dessert2/services/database_service.dart';
 import 'package:fufu_dessert2/services/audio_service.dart';
+import 'package:fufu_dessert2/services/tutorial_service.dart';
+import 'package:fufu_dessert2/widgets/level_up_screen.dart';
 
 class GameProvider with ChangeNotifier {
   static const int gridWidth = 7;
-  static const int gridHeight = 10;
+  static const int gridHeight = 9;
   
   List<List<GridDessert?>> _grid = List.generate(
     gridHeight,
@@ -21,8 +24,16 @@ class GameProvider with ChangeNotifier {
   int _score = 0;
   int _shopLevel = 1;
   int _nextDessertId = 1;
-  final Random _random = Random();
+  BuildContext? _currentContext;
+  final math.Random _random = math.Random();
   Timer? _autoSaveTimer;
+  
+  // Store open/close state management
+  bool _isStoreOpen = true;
+  DateTime? _lastStoreToggleTime;
+  final int _storeToggleCooldownSeconds = 0;
+  final int _maxClosureTimeMinutes = 5;
+  DateTime? _storeClosedTime;
   
   // Storage system for desserts
   late Storage _storage;
@@ -54,11 +65,74 @@ class GameProvider with ChangeNotifier {
   int get coins => _coins;
   int get score => _score;
   int get shopLevel => _shopLevel;
+  
+  // Store state getters
+  bool get isStoreOpen => _isStoreOpen;
+  bool get canToggleStore {
+    if (_lastStoreToggleTime == null) return true;
+    return DateTime.now().difference(_lastStoreToggleTime!).inSeconds >= _storeToggleCooldownSeconds;
+  }
+  
+  // Check if level up is ready (manual trigger available)
+  bool get levelUpReady {
+    return _shopLevel < levelRequirements.length && _score >= levelRequirements[_shopLevel];
+  }
+  
+  // Manual level up method (triggered by UI button)
+  void levelUp() {
+    if (levelUpReady) {
+      _performLevelUp();
+    }
+  }
+  
+  // Toggle store open/close state
+  void toggleStore() {
+    if (!canToggleStore) return;
+    
+    _isStoreOpen = !_isStoreOpen;
+    _lastStoreToggleTime = DateTime.now();
+    
+    if (_isStoreOpen) {
+      // Opening store
+      _storeClosedTime = null;
+      AudioService().playSoundEffect(SoundEffect.buttonPress);
+    } else {
+      // Closing store
+      _storeClosedTime = DateTime.now();
+      AudioService().playSoundEffect(SoundEffect.buttonPress);
+    }
+    
+    notifyListeners();
+  }
+  
+  // Check if store should be force-reopened due to max closure time
+  void _checkForcedReopening() {
+    if (!_isStoreOpen && _storeClosedTime != null) {
+      final closureTime = DateTime.now().difference(_storeClosedTime!);
+      if (closureTime.inMinutes >= _maxClosureTimeMinutes) {
+        _isStoreOpen = true;
+        _storeClosedTime = null;
+        notifyListeners();
+      }
+    }
+  }
+  
+  // Set context for tutorials
+  void setContext(BuildContext context) {
+    _currentContext = context;
+  }
   Storage get storage => _storage;
   bool get isSellMode => _isSellMode;
   List<Point<int>> get selectedForSale => _selectedForSale;
   List<Point<int>> get selectedCells => _selectedCells;
   int? get selectedLevel => _selectedLevel;
+
+  // Get level requirements (centralized to avoid duplication)
+  List<int> get levelRequirements => [
+    0, 800, 2200, 4300, 7200, 11000, 15800, 21700, 28800, 37200,
+    47400, 59000, 72200, 87100, 103800, 122400, 143000, 165700, 190600, 217800,
+    247400, 279500, 314200, 351600, 391800, 435000, 481300, 530800, 583600, 639800,
+  ];
 
   GameProvider() {
     _initializeStorage();
@@ -76,6 +150,7 @@ class GameProvider with ChangeNotifier {
   void _startAutoSave() {
     _autoSaveTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       saveGameState();
+      _checkForcedReopening();
     });
   }
 
@@ -84,6 +159,8 @@ class GameProvider with ChangeNotifier {
   }
 
   void _fillRandomSpaces(int count) {
+    if (count <= 0) return; // MEMORY OPTIMIZATION: Early exit
+    
     final emptySpaces = <Point<int>>[];
     
     for (int y = 0; y < gridHeight; y++) {
@@ -94,8 +171,10 @@ class GameProvider with ChangeNotifier {
       }
     }
     
+    if (emptySpaces.isEmpty) return; // MEMORY OPTIMIZATION: Early exit
+    
     emptySpaces.shuffle(_random);
-    final spacesToFill = min(count, emptySpaces.length);
+    final spacesToFill = math.min(count, emptySpaces.length);
     
     for (int i = 0; i < spacesToFill; i++) {
       final point = emptySpaces[i];
@@ -112,28 +191,28 @@ class GameProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  /// Generate random dessert level with balanced probabilities
-  /// Heavily weighted toward low levels for proper game progression
+  /// Generate random dessert level with improved balanced probabilities
+  /// Reduced bottleneck at mid-tier ingredients for smoother progression
   int _generateWeightedRandomLevel() {
     final roll = _random.nextInt(1000); // 0-999 for more precise control
     
-    // Ultra rare high levels (0.6% total)
-    if (roll < 1) return 10;      // 0.1% chance (1/1000)
-    if (roll < 3) return 9;       // 0.2% chance (2/1000)
-    if (roll < 6) return 8;       // 0.3% chance (3/1000)
+    // Ultra rare high levels (3% total) - IMPROVED BALANCE
+    if (roll < 1) return 10;      // 0.1% chance (1/1000) - Honey (unchanged)
+    if (roll < 5) return 9;       // 0.4% chance (4/1000) - Cream (4x increase)
+    if (roll < 15) return 8;      // 1.0% chance (10/1000) - Vanilla (5x increase)
+    if (roll < 30) return 7;      // 1.5% chance (15/1000) - Strawberries (15x increase)
     
-    // Rare mid-high levels (2.9% total) 
-    if (roll < 15) return 7;      // 0.9% chance (9/1000)
-    if (roll < 35) return 6;      // 2.0% chance (20/1000)
+    // Rare mid-high levels (7% total) - SIGNIFICANTLY IMPROVED
+    if (roll < 60) return 6;      // 3.0% chance (30/1000) - Chocolate (3x increase)
+    if (roll < 100) return 5;     // 4.0% chance (40/1000) - Eggs (2.7x increase)
     
-    // Uncommon mid levels (7% total)
-    if (roll < 70) return 5;      // 3.5% chance (35/1000)
-    if (roll < 105) return 4;     // 3.5% chance (35/1000)
+    // Uncommon mid levels (25% total) - MUCH MORE ACCESSIBLE
+    if (roll < 200) return 4;     // 10.0% chance (100/1000) - Butter (1.7x increase)
+    if (roll < 350) return 3;     // 15.0% chance (150/1000) - Milk (2.5x increase)
     
-    // Common low levels (89.5% total) - main gameplay
-    if (roll < 405) return 3;     // 30% chance (300/1000)
-    if (roll < 705) return 2;     // 30% chance (300/1000)  
-    return 1;                     // 29.5% chance (295/1000)
+    // Common low levels (65% total) - STILL DOMINANT BUT BALANCED
+    if (roll < 650) return 2;     // 30.0% chance (300/1000) - Sugar (reduced from 42.5%)
+    return 1;                     // 35.0% chance (350/1000) - Flour (reduced from 42.5%)
   }
 
   void generateRandomDessert() {
@@ -163,12 +242,17 @@ class GameProvider with ChangeNotifier {
     final point = Point(x, y);
     final dessert = _grid[y][x];
     
+    // Play bubble click sound when tapping on a dessert
+    if (dessert != null) {
+      AudioService().playSoundEffect(SoundEffect.bubbleClick);
+    }
+    
     if (dessert == null) {
       // Empty cell - generate random dessert at random locations
       _fillRandomSpaces(1);
       
-      // Play sound effect
-      AudioService().playSoundEffect(SoundEffect.merge);
+      // Play bubble click sound effect
+      AudioService().playSoundEffect(SoundEffect.bubbleClick);
       
       return;
     }
@@ -199,7 +283,7 @@ class GameProvider with ChangeNotifier {
       // AUTO-MERGE when we reach 3 selected!
       if (_selectedCells.length == 3) {
         // Small delay for visual feedback, then auto-merge
-        Future.delayed(const Duration(milliseconds: 300), () {
+        Future.delayed(const Duration(milliseconds: 50), () {
           attemptMerge();
         });
       }
@@ -245,7 +329,7 @@ class GameProvider with ChangeNotifier {
     
     // Create upgraded dessert(s) with bonus probability
     final firstPoint = _selectedCells[0];
-    final nextLevel = min(_selectedLevel! + 1, 10);
+    final nextLevel = math.min(_selectedLevel! + 1, 10);
     final newDessert = Dessert.getDessertByLevel(nextLevel);
     
     // Determine number of desserts to create based on probability
@@ -280,7 +364,7 @@ class GameProvider with ChangeNotifier {
       }
       
       emptySpaces.shuffle(_random);
-      final bonusDessertsToPlace = min(dessertsToCreate - 1, emptySpaces.length);
+      final bonusDessertsToPlace = math.min(dessertsToCreate - 1, emptySpaces.length);
       
       // Place bonus desserts
       for (int i = 0; i < bonusDessertsToPlace; i++) {
@@ -295,13 +379,13 @@ class GameProvider with ChangeNotifier {
       
       // Show bonus message
       if (bonusDessertsToPlace > 0) {
-        final totalCreated = bonusDessertsToPlace + 1;
-        debugPrint('🎉 Manual Merge Bonus! Created $totalCreated x ${newDessert.name}!');
+        // totalCreated would be bonusDessertsToPlace + 1
       }
     }
     
-    // Award score points for merging achievement
-    _score += newDessert.baseValue * 2;
+    // Award score points for merging achievement (1.5x XP)
+    final xpEarned = (newDessert.baseValue * 1.5).round();
+    _score += xpEarned;
     
     // Play merge sound effect
     AudioService().playSoundEffect(SoundEffect.merge);
@@ -341,6 +425,9 @@ class GameProvider with ChangeNotifier {
     final dessert = _grid[y][x];
     
     if (dessert == null) return;
+    
+    // Play bubble click sound when tapping on a dessert in sell mode
+    AudioService().playSoundEffect(SoundEffect.bubbleClick);
     
     if (_selectedForSale.contains(point)) {
       _selectedForSale.remove(point);
@@ -460,31 +547,218 @@ class GameProvider with ChangeNotifier {
 
 
   void _checkShopLevelUpgrade() {
-    final requiredScore = _shopLevel * 1000;
-    if (_score >= requiredScore) {
+    // Check if player qualifies for level up
+    if (_shopLevel < levelRequirements.length) {
+      final requiredScore = levelRequirements[_shopLevel];
+      
+      if (_score >= requiredScore) {
+        _performLevelUp();
+      }
+    }
+  }
+  
+  // Automatic level up method
+  void _performLevelUp() {
+    if (_shopLevel < levelRequirements.length && _score >= levelRequirements[_shopLevel]) {
       final oldLevel = _shopLevel;
       _shopLevel++;
-      _coins += _shopLevel * 50; // Level up bonus
+      
+      // Progressive coin rewards: 100, 150, 200, 250, 300, 350, 400, 450, 500, capped at 1000
+      final coinReward = math.min(1000, 50 + _shopLevel * 50);
+      _coins += coinReward;
       
       // Notify other providers about level change
       if (onShopLevelChanged != null) {
         onShopLevelChanged!(_shopLevel);
       }
       
-      debugPrint('🎉 CAFÉ LEVEL UP! Level $oldLevel → $_shopLevel');
-      debugPrint('💰 Bonus: ${_shopLevel * 50} coins earned!');
+      
+      // Play level up sound effect
+      AudioService().playSoundEffect(SoundEffect.levelUp);
+      
+      _checkForNewUnlocks(oldLevel, _shopLevel);
+      
+      // Show level up screen if context is available
+      if (_currentContext != null) {
+        debugPrint('🎬 GameProvider: Showing level up screen');
+        _showLevelUpScreen(oldLevel, _shopLevel, coinReward);
+      } else {
+      }
+      
+      notifyListeners();
     }
   }
 
+  // Show level up screen
+  void _showLevelUpScreen(int oldLevel, int newLevel, int coinReward) {
+    if (_currentContext != null) {
+      Navigator.of(_currentContext!).push(
+        PageRouteBuilder(
+          opaque: false,
+          pageBuilder: (context, animation, secondaryAnimation) {
+            return FadeTransition(
+              opacity: animation,
+              child: LevelUpScreen(
+                oldLevel: oldLevel,
+                newLevel: newLevel,
+                coinReward: coinReward,
+                gameProvider: this,
+                onDismiss: () {
+                  Navigator.of(context).pop();
+                },
+              ),
+            );
+          },
+        ),
+      );
+    }
+  }
+  
+  void _checkForNewUnlocks(int oldLevel, int newLevel) {
+    // Determine if this is a major unlock requiring full-screen celebration
+    bool isMajorUnlock = [3, 6, 8, 10].contains(newLevel);
+    
+    // Calculate unlock details
+    Map<String, dynamic> unlockData = _getUnlockData(newLevel);
+    
+    if (isMajorUnlock) {
+      // Major Unlocks - Full-screen animation with showcase
+      
+      // TODO: Trigger full-screen celebration animation
+      _triggerMajorUnlockCelebration(unlockData);
+    } else {
+      // Minor Unlocks - Notification banner
+      
+      // TODO: Trigger notification banner
+      _triggerMinorUnlockNotification(unlockData);
+    }
+  }
+  
+  Map<String, dynamic> _getUnlockData(int level) {
+    switch (level) {
+      case 2:
+        return {
+          'title': 'First Recipe Unlocked!',
+          'features': ['Cookies recipe', 'Crafting system'],
+          'bonus': '50 coins + free ingredients',
+        };
+      case 3:
+        return {
+          'title': 'Furniture Store Opens!',
+          'features': ['Furniture store', 'Simple recipes', 'Basic decorations'],
+          'bonus': '100 coins + starter furniture pack',
+        };
+      case 4:
+        return {
+          'title': 'Master Chef Certification!',
+          'features': ['3-ingredient recipes', 'Third table slot', 'Medium furniture'],
+          'bonus': '150 coins + recipe book',
+        };
+      case 5:
+        return {
+          'title': 'Chocolate Unlocked!',
+          'features': ['Chocolate ingredient', 'Premium furniture tier'],
+          'bonus': '200 coins + chocolate starter pack',
+        };
+      case 6:
+        return {
+          'title': 'Interior Designer!',
+          'features': ['Complex 4-ingredient recipes', 'Luxury furniture', 'Fourth table slot'],
+          'bonus': '250 coins + designer furniture set',
+        };
+      case 7:
+        return {
+          'title': 'Advanced Recipes!',
+          'features': ['Vanilla ingredient', 'Premium decorations'],
+          'bonus': '300 coins + vanilla collection',
+        };
+      case 8:
+        return {
+          'title': 'Culinary Artist!',
+          'features': ['Master recipes', 'Elite furniture', 'Fifth table slot'],
+          'bonus': '400 coins + artist collection',
+        };
+      case 9:
+        return {
+          'title': 'Expert Chef!',
+          'features': ['Honey ingredient', 'Expert recipes'],
+          'bonus': '450 coins + honey collection',
+        };
+      case 10:
+        return {
+          'title': 'Dessert Empire!',
+          'features': ['Ultimate recipes', 'Prestige furniture', 'Sixth table slot'],
+          'bonus': '500 coins + empire starter pack',
+        };
+      default:
+        return {
+          'title': 'Level Up!',
+          'features': ['New opportunities'],
+          'bonus': '${50 + level * 25} coins',
+        };
+    }
+  }
+  
+  void _triggerMajorUnlockCelebration(Map<String, dynamic> unlockData) {
+    // TODO: Implement full-screen celebration animation
+    // This would typically show:
+    // - Full-screen overlay with celebration animation
+    // - Achievement badge
+    // - Feature showcase with tutorial popup
+    // - Starter bonus distribution
+  }
+  
+  void _triggerMinorUnlockNotification(Map<String, dynamic> unlockData) {
+    // TODO: Implement notification banner
+    // This would typically show:
+    // - Top banner notification
+    // - Shop highlight for new items
+    // - Small coin bonus
+  }
+
   void earnCoins(int amount) {
+    final xpEarned = amount * 3;
     _coins += amount;
-    _score += amount * 5;
+    _score += xpEarned; // Customer served: 3x XP
     _checkShopLevelUpgrade();
     
     // Play coin sound effect
     AudioService().playSoundEffect(SoundEffect.coin);
     
     notifyListeners();
+  }
+  
+  // Apply penalty for customer timeout
+  void applyCustomerTimeoutPenalty(int patienceRemaining) {
+    int penalty = _calculateTimeoutPenalty(patienceRemaining);
+    
+    // Apply level-based penalty scaling
+    if (_shopLevel <= 5) {
+      penalty = (penalty * 0.5).round(); // 50% reduced for early game
+    } else if (_shopLevel >= 16) {
+      penalty = (penalty * 1.25).round(); // 25% increased for late game
+    }
+    
+    // Apply closed store bonus (50% reduced penalties)
+    if (!_isStoreOpen) {
+      penalty = (penalty * 0.5).round();
+    }
+    
+    // Apply penalty with minimum balance protection
+    _coins = math.max(10, _coins - penalty);
+    
+    // Play negative audio feedback
+    AudioService().playSoundEffect(SoundEffect.buttonPress); // Placeholder - could add angry customer sound
+    
+    notifyListeners();
+  }
+  
+  // Calculate penalty amount based on patience remaining
+  int _calculateTimeoutPenalty(int patienceRemaining) {
+    if (patienceRemaining <= 5) return 50;      // Furious
+    if (patienceRemaining <= 15) return 30;     // Angry
+    if (patienceRemaining <= 30) return 15;     // Disappointed
+    return 5;                                   // Mildly upset
   }
   
   // Sell dessert from grid to storage
@@ -506,21 +780,28 @@ class GameProvider with ChangeNotifier {
     return true;
   }
   
-  // Serve dessert from storage to customer (this will generate coins)
+  // Serve dessert from grid to customer (this will generate coins)
   bool serveDessertFromStorage(int dessertLevel) {
-    if (!_storage.hasEnough(dessertLevel)) {
-      return false;
+    // Find and remove a dessert of the specified level from the grid
+    for (int y = 0; y < gridHeight; y++) {
+      for (int x = 0; x < gridWidth; x++) {
+        final cell = _grid[y][x];
+        if (cell != null && cell.dessert.level == dessertLevel) {
+          // Remove the dessert from grid
+          _grid[y][x] = null;
+          
+          // Calculate payment based on dessert level
+          final dessert = Dessert.getDessertByLevel(dessertLevel);
+          final payment = dessert.baseValue;
+          earnCoins(payment);
+          
+          notifyListeners();
+          saveGameState();
+          return true;
+        }
+      }
     }
-    
-    _storage.removeDessert(dessertLevel);
-    
-    // Calculate payment based on dessert level
-    final dessert = Dessert.getDessertByLevel(dessertLevel);
-    final payment = dessert.baseValue;
-    earnCoins(payment);
-    
-    saveGameState();
-    return true;
+    return false; // No dessert of that level found
   }
   
   void spendCoins(int amount) {
@@ -534,10 +815,14 @@ class GameProvider with ChangeNotifier {
   // Dessert crafting methods
   bool canCraftDessert(int dessertId) {
     final dessert = CraftableDessert.getDessertById(dessertId);
-    if (dessert == null) return false;
+    if (dessert == null) {
+      return false;
+    }
+
 
     // Check if we have all required ingredients in the grid
     final requiredIngredients = List<int>.from(dessert.requiredIngredients);
+    List<String> foundIngredients = [];
     
     for (int row = 0; row < gridHeight; row++) {
       for (int col = 0; col < gridWidth; col++) {
@@ -545,12 +830,14 @@ class GameProvider with ChangeNotifier {
         if (cell != null) {
           final index = requiredIngredients.indexOf(cell.dessert.level);
           if (index != -1) {
+            foundIngredients.add('${cell.dessert.name} (level ${cell.dessert.level}) at ($row,$col)');
             requiredIngredients.removeAt(index);
           }
         }
       }
     }
-
+    
+    
     return requiredIngredients.isEmpty;
   }
 
@@ -584,8 +871,8 @@ class GameProvider with ChangeNotifier {
     // Add crafted dessert to storage
     _storage.addCraftedDessert(dessertId);
 
-    // Award score for successful crafting
-    _score += dessert.baseValue ~/ 10; // 10% of dessert value as score
+    // Award score for successful crafting (2x XP + time bonus)
+    _score += dessert.baseValue * 2; // Crafting success: Recipe value × 2 XP
 
     // Play craft sound effect
     AudioService().playSoundEffect(SoundEffect.craft);
@@ -690,7 +977,7 @@ class GameProvider with ChangeNotifier {
   // Get available craftable desserts based on grid ingredients
   List<CraftableDessert> getAvailableCraftableDesserts() {
     final availableIngredientLevels = _getGridIngredientLevels();
-    return CraftableDessert.getAvailableDesserts(availableIngredientLevels);
+    return CraftableDessert.getAvailableDesserts(availableIngredientLevels, _shopLevel);
   }
 
   // Get missing ingredients for a dessert
@@ -778,14 +1065,48 @@ class GameProvider with ChangeNotifier {
       final grid = await db.loadDessertGrid();
       if (grid != null && _isValidGridSize(grid)) {
         _grid = grid;
-      } else {
-        // Grid size mismatch or invalid - create new grid with current dimensions
-        debugPrint('Grid size mismatch detected, creating new grid with current dimensions (${gridWidth}x${gridHeight})');
+      } else if (grid != null) {
+        // Grid size mismatch - try to preserve as many items as possible
+        // Silent migration from old grid size to new grid size
         _grid = List.generate(
           gridHeight,
           (_) => List.generate(gridWidth, (_) => null),
         );
-        _fillRandomSpaces(5); // Fill with some initial desserts (reduced for 7x10 grid)
+        
+        // Transfer items from old grid to new grid where possible
+        int transferredItems = 0;
+        for (int row = 0; row < math.min(grid.length, gridHeight); row++) {
+          for (int col = 0; col < math.min(grid[row].length, gridWidth); col++) {
+            if (grid[row][col] != null) {
+              _grid[row][col] = grid[row][col];
+              transferredItems++;
+            }
+          }
+        }
+        
+        // Silently transferred $transferredItems items from old grid to new grid
+        
+        // Fill empty spaces with some new items if grid is too empty
+        final emptySpaces = _countEmptySpaces();
+        if (emptySpaces > (gridWidth * gridHeight * 0.8)) {
+          _fillRandomSpaces(3); // Add fewer items since we preserved some
+        }
+      } else {
+        // No saved grid - create new grid with initial items
+        debugPrint('No saved grid found, creating new grid with current dimensions (${gridWidth}x${gridHeight})');
+        _grid = List.generate(
+          gridHeight,
+          (_) => List.generate(gridWidth, (_) => null),
+        );
+        _fillRandomSpaces(5); // Fill with some initial desserts
+      }
+      
+      // Check if level up is ready after loading state
+      _checkShopLevelUpgrade();
+      
+      // Trigger shop level update to sync with other providers (like CustomerProvider)
+      if (onShopLevelChanged != null) {
+        onShopLevelChanged!(_shopLevel);
       }
       
       notifyListeners();
@@ -797,6 +1118,7 @@ class GameProvider with ChangeNotifier {
   // Complete reset to initial state
   Future<void> resetToInitialState() async {
     try {
+      
       // Clear all internal state
       _coins = 100;
       _score = 0;
@@ -838,24 +1160,65 @@ class GameProvider with ChangeNotifier {
     }
     return true;
   }
+  
+  int _countEmptySpaces() {
+    int emptyCount = 0;
+    for (int row = 0; row < gridHeight; row++) {
+      for (int col = 0; col < gridWidth; col++) {
+        if (_grid[row][col] == null) {
+          emptyCount++;
+        }
+      }
+    }
+    return emptyCount;
+  }
 
   // Experience and level methods for UI display
   int getShopExperience() {
-    // Calculate current experience based on score and level
-    // This is a simple implementation - adjust based on your game's leveling system
-    return _score % 1000; // Experience resets every 1000 points
+    // Calculate current experience within the current level
+    if (_shopLevel <= 1) return _score;
+    
+    // Get the XP requirement for current level (previous level's requirement)
+    final currentLevelStartXP = levelRequirements[_shopLevel - 1];
+    return _score - currentLevelStartXP;
   }
   
   int getRequiredExperience() {
     // Calculate required experience for next level
-    return 1000; // Simple: always need 1000 points to level up
+    if (_shopLevel >= levelRequirements.length) {
+      return 1000; // Default for levels beyond our array
+    }
+    
+    // Get XP needed for next level
+    final nextLevelRequiredXP = levelRequirements[_shopLevel];
+    final currentLevelStartXP = _shopLevel <= 1 ? 0 : levelRequirements[_shopLevel - 1];
+    return nextLevelRequiredXP - currentLevelStartXP;
   }
 
 
   @override
   void dispose() {
+    // MEMORY CLEANUP: Cancel all timers
     _autoSaveTimer?.cancel();
-    saveGameState();
+    _saveTimer?.cancel();
+    
+    // MEMORY CLEANUP: Clear collections
+    _selectedCells.clear();
+    _selectedForSale.clear();
+    
+    // MEMORY CLEANUP: Clear grid
+    for (int i = 0; i < _grid.length; i++) {
+      _grid[i].clear();
+    }
+    _grid.clear();
+    
+    // MEMORY CLEANUP: Null callbacks
+    onShopLevelChanged = null;
+    _currentContext = null;
+    
+    // Save state before disposal
+    saveGameStateImmediate();
+    
     super.dispose();
   }
 }

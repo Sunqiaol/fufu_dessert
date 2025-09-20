@@ -16,90 +16,90 @@ class _TutorialScreenState extends State<TutorialScreen> {
       title: 'Welcome to Fufu Dessert! 🍰',
       description: 'Welcome to your very own dessert café! In this game, you\'ll merge ingredients, craft delicious desserts, and serve happy customers.',
       icon: '🎉',
-      imagePath: null,
+      imagePath: 'assets/images/characters/fufu.png',
     ),
     TutorialStep(
       title: 'The Merge Grid 🌾',
       description: 'This 5×7 grid is where the magic happens! You\'ll see base ingredients like Flour, Sugar, Milk, and more appearing here.',
       icon: '📦',
-      imagePath: null,
+      imagePath: 'assets/images/characters/fufu.png',
       tips: ['Grid contains 35 cells for ingredients', 'New ingredients appear automatically', 'Each ingredient has a level (1-10)'],
     ),
     TutorialStep(
       title: 'How to Merge ✨',
       description: 'Tap 3 identical ingredients to merge them into a better ingredient! For example: 3 Flour (Level 1) → 1 Sugar (Level 2)',
       icon: '🔄',
-      imagePath: null,
+      imagePath: 'assets/images/characters/fufu.png',
       tips: ['Must tap exactly 3 identical ingredients', 'They upgrade to the next level automatically', 'Higher levels = more valuable!'],
     ),
     TutorialStep(
       title: 'Base Ingredients (Levels 1-10) 🥚',
       description: 'There are 10 base ingredient levels you can merge through:\n\n🌾 Flour → 🍬 Sugar → 🥛 Milk → 🧈 Butter → 🥚 Eggs → 🍫 Chocolate → 🍓 Strawberries → 🌟 Vanilla → 🍦 Cream → 🍯 Honey',
       icon: '📊',
-      imagePath: null,
+      imagePath: 'assets/images/characters/fufu.png',
       tips: ['Start with basic ingredients like Flour', 'Merge to get premium ingredients like Honey', 'Each level is worth more coins!'],
     ),
     TutorialStep(
       title: 'Sell Mode 💰',
       description: 'Click "Sell Mode" to select ingredients you want to store. Selected ingredients get a green glow. Then click "Store" to move them to your storage.',
       icon: '💸',
-      imagePath: null,
+      imagePath: 'assets/images/characters/fufu.png',
       tips: ['Green glow = selected for storage', 'You can select multiple ingredients', 'Stored ingredients can be served to customers'],
     ),
     TutorialStep(
       title: 'Your Storage 📦',
       description: 'The Storage screen has two tabs:\n• "Merged Desserts" - Your base ingredients\n• "Crafted Desserts" - Complex recipes you\'ve made',
       icon: '🏪',
-      imagePath: null,
+      imagePath: 'assets/images/characters/fufu.png',
       tips: ['Check storage often to see what you have', 'Customers want items from your storage', 'More storage = more serving options'],
     ),
     TutorialStep(
       title: 'Crafting System 👩‍🍳',
       description: 'Use the "Craft" button to make complex desserts! Combine multiple ingredients following recipes like:\n• Cookies = Flour + Sugar + Butter\n• Cupcake = Flour + Sugar + Eggs + Vanilla',
       icon: '🍪',
-      imagePath: null,
+      imagePath: 'assets/images/characters/fufu.png',
       tips: ['10 different dessert recipes available', 'Need specific ingredients for each recipe', 'Crafted desserts are worth MUCH more!'],
     ),
     TutorialStep(
       title: 'Sample Recipes 📋',
       description: 'Here are some recipes to get you started:\n\n🍪 Cookies: Flour + Sugar + Butter\n🧁 Cupcake: Flour + Sugar + Eggs + Vanilla\n🥞 Pancakes: Flour + Milk + Eggs + Honey\n🎂 Rainbow Cake: ALL 10 ingredients!',
       icon: '📝',
-      imagePath: null,
+      imagePath: 'assets/images/characters/fufu.png',
       tips: ['Start with simple 3-ingredient recipes', 'Rainbow Cake is the ultimate challenge', 'More ingredients = higher value'],
     ),
     TutorialStep(
       title: 'Serving Customers 🐻',
       description: 'Customers will appear in your café with orders! They want either:\n• Merged Desserts (from your ingredient storage)\n• Crafted Desserts (from your recipe crafting)',
       icon: '👥',
-      imagePath: null,
+      imagePath: 'assets/images/characters/fufu.png',
       tips: ['70% want merged ingredients', '30% want crafted desserts', 'Serve quickly before they get impatient!'],
     ),
     TutorialStep(
       title: 'Customer Orders 📝',
       description: 'Look for customer order descriptions:\n• "🌾 Flour (Merged)" = wants Level 1 ingredient\n• "🍪 Cookies (Crafted)" = wants crafted dessert\n\nTap customers to serve them!',
       icon: '📋',
-      imagePath: null,
+      imagePath: 'assets/images/characters/fufu.png',
       tips: ['Check what each customer wants', 'Make sure you have it in storage', 'Happy customers = more coins!'],
     ),
     TutorialStep(
       title: 'Café Management 🏠',
       description: 'Switch to the "Café" tab to:\n• See customers walking around\n• Manage your café layout\n• Serve customers directly by tapping them',
       icon: '🏢',
-      imagePath: null,
+      imagePath: 'assets/images/characters/fufu.png',
       tips: ['Customers need tables to sit', 'Impatient customers leave quickly', 'Good service = higher profits'],
     ),
     TutorialStep(
       title: 'Game Strategy 🎯',
       description: 'Winning Tips:\n• Merge ingredients regularly to get higher levels\n• Keep a variety in storage for different customers\n• Focus on crafting valuable desserts\n• Serve customers quickly for maximum profit!',
       icon: '💡',
-      imagePath: null,
+      imagePath: 'assets/images/characters/fufu.png',
       tips: ['Balance merging and storing', 'Craft expensive desserts for big profits', 'Don\'t let customers wait too long'],
     ),
     TutorialStep(
       title: 'Ready to Start! 🚀',
       description: 'You now know everything to run your dessert café successfully!\n\nRemember: Merge → Store → Craft → Serve → Profit!\n\nGood luck, and have fun building your dessert empire!',
       icon: '🎊',
-      imagePath: null,
+      imagePath: 'assets/images/characters/fufu.png',
       tips: ['Start simple and experiment', 'Check the tutorial anytime from Settings', 'Most importantly - have fun!'],
     ),
   ];
@@ -301,10 +301,10 @@ class _TutorialScreenState extends State<TutorialScreen> {
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-          // Icon
+          // Owner character image
           Container(
-            width: 100,
-            height: 100,
+            width: 120,
+            height: 120,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               gradient: RadialGradient(
@@ -314,13 +314,36 @@ class _TutorialScreenState extends State<TutorialScreen> {
                   Colors.transparent,
                 ],
               ),
+              border: Border.all(color: Colors.brown[300]!, width: 3),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.brown.withOpacity(0.3),
+                  blurRadius: 10,
+                  offset: const Offset(0, 5),
+                ),
+              ],
             ),
-            child: Center(
-              child: Text(
-                step.icon,
-                style: const TextStyle(fontSize: 48),
-              ),
-            ),
+            child: step.imagePath != null
+                ? ClipOval(
+                    child: Image.asset(
+                      step.imagePath!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return Center(
+                          child: Text(
+                            step.icon,
+                            style: const TextStyle(fontSize: 48),
+                          ),
+                        );
+                      },
+                    ),
+                  )
+                : Center(
+                    child: Text(
+                      step.icon,
+                      style: const TextStyle(fontSize: 48),
+                    ),
+                  ),
           ),
           
           const SizedBox(height: 24),

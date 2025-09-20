@@ -15,6 +15,7 @@ enum FurnitureType {
   storage,
   service,
   premium,
+  wall,
 }
 
 class Furniture {
@@ -55,10 +56,10 @@ class Furniture {
     Furniture(
       id: 'display_case_1',
       type: FurnitureType.displayCase,
-      name: 'Basic Display Case',
+      name: 'Basic Display',
       emoji: '🗄️',
       level: 1,
-      price: 50,
+      price: 100,
       width: 2.0,
       height: 1.0,
       color: Color(0xFF8B4513),
@@ -464,6 +465,21 @@ class Furniture {
       canUpgrade: true,
     ),
     
+    // === WALLS & STRUCTURE ===
+    Furniture(
+      id: 'door_wall',
+      type: FurnitureType.wall,
+      name: 'Door Wall',
+      emoji: '🚪',
+      level: 1,
+      price: 50,
+      width: 1.0,
+      height: 1.0,
+      color: Color(0xFF8B4513),
+      attractionBonus: 5,
+      canUpgrade: false,
+    ),
+    
     // === PREMIUM ITEMS ===
     Furniture(
       id: 'fountain',
@@ -495,7 +511,26 @@ class Furniture {
 
   // Helper methods for furniture management
   static List<Furniture> getAvailableForLevel(int shopLevel) {
+    // Progressive unlock system: furniture store opens at level 3
+    if (shopLevel < 3) return [];
+    
     return furnitureItems.where((furniture) => furniture.level <= shopLevel).toList();
+  }
+  
+  // Get furniture for specific tier based on progressive unlock system
+  static List<Furniture> getForTier(String tier) {
+    switch (tier) {
+      case 'starter': // Level 3-4
+        return furnitureItems.where((f) => f.level >= 1 && f.level <= 2 && f.price <= 50).toList();
+      case 'comfort': // Level 5-6  
+        return furnitureItems.where((f) => f.level >= 2 && f.level <= 3 && f.price >= 45 && f.price <= 120).toList();
+      case 'premium': // Level 7-8
+        return furnitureItems.where((f) => f.level >= 3 && f.level <= 4 && f.price >= 120 && f.price <= 300).toList();
+      case 'luxury': // Level 9-10
+        return furnitureItems.where((f) => f.level >= 4 && f.price >= 300).toList();
+      default:
+        return [];
+    }
   }
 
   static List<Furniture> getByType(FurnitureType type) {

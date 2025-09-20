@@ -1,8 +1,9 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:fufu_dessert2/providers/game_provider.dart';
+import 'package:fufu_dessert2/providers/customer_provider.dart';
 import 'package:fufu_dessert2/models/dessert.dart';
+import 'package:fufu_dessert2/models/craftable_dessert.dart';
 import 'package:fufu_dessert2/utils/app_theme.dart';
 
 class MergeGridWidget extends StatelessWidget {
@@ -112,8 +113,8 @@ class MergeGridWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<GameProvider>(
-      builder: (context, gameProvider, child) {
+    return Consumer2<GameProvider, CustomerProvider>(
+      builder: (context, gameProvider, customerProvider, child) {
         return Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -173,7 +174,7 @@ class MergeGridWidget extends StatelessWidget {
                         return Container(
                           decoration: _getCachedCellDecoration(gameProvider, gridDessert, x, y),
                           child: gridDessert != null
-                              ? _buildFilledCell(context, gameProvider, gridDessert, cellSize)
+                              ? _buildFilledCell(context, gameProvider, customerProvider, gridDessert, cellSize)
                               : _buildEmptyCell(gameProvider, x, y, cellSize),
                         );
                       },
@@ -186,7 +187,7 @@ class MergeGridWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildFilledCell(BuildContext context, GameProvider gameProvider, GridDessert gridDessert, double cellSize) {
+  Widget _buildFilledCell(BuildContext context, GameProvider gameProvider, CustomerProvider customerProvider, GridDessert gridDessert, double cellSize) {
     return Draggable<Map<String, dynamic>>(
       data: {
         'type': 'grid_dessert',
@@ -237,16 +238,18 @@ class MergeGridWidget extends StatelessWidget {
       ),
       childWhenDragging: Opacity(
         opacity: 0.3,
-        child: _buildDessertContent(gridDessert, cellSize),
+        child: _buildDessertContent(gridDessert, customerProvider, cellSize),
       ),
       child: GestureDetector(
         onTap: () => gameProvider.selectCell(gridDessert.gridX, gridDessert.gridY),
-        child: _buildDessertContent(gridDessert, cellSize),
+        child: _buildDessertContent(gridDessert, customerProvider, cellSize),
       ),
     );
   }
 
-  Widget _buildDessertContent(GridDessert gridDessert, double cellSize) {
+  Widget _buildDessertContent(GridDessert gridDessert, CustomerProvider customerProvider, double cellSize) {
+    // Check if any customer wants this dessert
+    final bool isWantedByCustomer = customerProvider.isAnyCustomerWantingLevel(gridDessert.dessert.level);
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -354,6 +357,14 @@ class MergeGridWidget extends StatelessWidget {
               ),
             ),
           ),
+        
+        // Customer want hint icon (top-right with pulsing animation)
+        if (isWantedByCustomer)
+          Positioned(
+            top: cellSize * 0.02,
+            right: cellSize * 0.02,
+            child: _PulsingHintIcon(cellSize: cellSize),
+          ),
       ],
     );
   }
@@ -415,144 +426,101 @@ class MergeGridWidget extends StatelessWidget {
     );
   }
 
-  LinearGradient _getCellGradient(GameProvider gameProvider, GridDessert? gridDessert, int x, int y) {
-    // Sell mode selection - green gradient
-    if (gameProvider.isSellMode && gameProvider.isSelectedForSale(x, y)) {
-      return LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [
-          const Color(0xFF90EE90).withOpacity(0.8), // Light green
-          const Color(0xFF32CD32).withOpacity(0.6), // Lime green
-          const Color(0xFF98FB98).withOpacity(0.9), // Pale green
-        ],
-      );
-    }
-    
-    // Merge mode selection - blue gradient
-    if (gameProvider.isSelected(x, y)) {
-      return LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [
-          const Color(0xFF87CEEB).withOpacity(0.8), // Sky blue
-          const Color(0xFF4169E1).withOpacity(0.6), // Royal blue
-          const Color(0xFFE6E6FA).withOpacity(0.9), // Lavender
-        ],
-      );
-    }
-    
-    if (gridDessert != null) {
-      // Dessert cells have a warm, bakery-like gradient
-      return LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [
-          Colors.white,
-          gridDessert.dessert.color.withOpacity(0.2),
-          Colors.white.withOpacity(0.9),
-        ],
-      );
-    } else {
-      // Empty cells have a subtle cream gradient
-      return const LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [
-          Color(0xFFFFFAF0), // Floral white
-          Color(0xFFF5F5DC), // Beige
-          Color(0xFFFFF8DC), // Cornsilk
-        ],
-      );
-    }
+
+}
+
+class _PulsingHintIcon extends StatefulWidget {
+  final double cellSize;
+  
+  const _PulsingHintIcon({required this.cellSize});
+  
+  @override
+  State<_PulsingHintIcon> createState() => _PulsingHintIconState();
+}
+
+class _PulsingHintIconState extends State<_PulsingHintIcon>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _scaleAnimation;
+  late Animation<double> _opacityAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1200),
+      vsync: this,
+    );
+
+    _scaleAnimation = Tween<double>(
+      begin: 0.8,
+      end: 1.3,
+    ).animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeInOut,
+    ));
+
+    _opacityAnimation = Tween<double>(
+      begin: 0.7,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeInOut,
+    ));
+
+    // Start the repeating animation
+    _controller.repeat(reverse: true);
   }
 
-  Color _getCellBorderColor(GameProvider gameProvider, int x, int y) {
-    if (gameProvider.isSelected(x, y)) {
-      return const Color(0xFF4169E1); // Royal blue for selected
-    }
-    
-    final gridDessert = gameProvider.grid[y][x];
-    if (gridDessert != null && 
-        gameProvider.selectedLevel != null && 
-        gridDessert.dessert.level == gameProvider.selectedLevel &&
-        gameProvider.canSelectMore()) {
-      return const Color(0xFF32CD32); // Lime green for selectable
-    }
-    
-    if (gridDessert != null) {
-      return const Color(0xFFFFB6C1); // Light pink for desserts
-    }
-    
-    return const Color(0xFFDDA0DD); // Plum for empty cells
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 
-  double _getBorderWidth(GameProvider gameProvider, int x, int y) {
-    if (gameProvider.isSelected(x, y)) {
-      return 4.0; // Selected cells have thick border
-    }
-    
-    final gridDessert = gameProvider.grid[y][x];
-    if (gridDessert != null && 
-        gameProvider.selectedLevel != null && 
-        gridDessert.dessert.level == gameProvider.selectedLevel &&
-        gameProvider.canSelectMore()) {
-      return 3.0; // Selectable cells have medium border
-    }
-    
-    return 2.0; // Default border width (thicker for café look)
-  }
-
-  List<BoxShadow> _getCellShadow(GameProvider gameProvider, int x, int y) {
-    if (gameProvider.isSelected(x, y)) {
-      // Selected cells have a magical glow
-      return [
-        BoxShadow(
-          color: const Color(0xFF4169E1).withOpacity(0.6),
-          blurRadius: 12,
-          spreadRadius: 3,
-          offset: const Offset(0, 4),
-        ),
-        BoxShadow(
-          color: Colors.white.withOpacity(0.8),
-          blurRadius: 8,
-          spreadRadius: 1,
-          offset: const Offset(-2, -2),
-        ),
-      ];
-    }
-
-    final gridDessert = gameProvider.grid[y][x];
-    if (gridDessert != null) {
-      // Dessert cells have a warm shadow
-      return [
-        BoxShadow(
-          color: gridDessert.dessert.color.withOpacity(0.3),
-          blurRadius: 8,
-          spreadRadius: 1,
-          offset: const Offset(2, 4),
-        ),
-        BoxShadow(
-          color: Colors.white.withOpacity(0.7),
-          blurRadius: 4,
-          offset: const Offset(-1, -2),
-        ),
-      ];
-    } else {
-      // Empty cells have a subtle inset shadow
-      return [
-        BoxShadow(
-          color: Colors.pink.withOpacity(0.1),
-          blurRadius: 6,
-          spreadRadius: 1,
-          offset: const Offset(2, 3),
-        ),
-        BoxShadow(
-          color: Colors.white.withOpacity(0.9),
-          blurRadius: 3,
-          offset: const Offset(-1, -1),
-        ),
-      ];
-    }
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Transform.scale(
+          scale: _scaleAnimation.value,
+          child: Opacity(
+            opacity: _opacityAnimation.value,
+            child: Container(
+              width: widget.cellSize * 0.25,
+              height: widget.cellSize * 0.25,
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  colors: [
+                    Colors.orange,
+                    Colors.deepOrange,
+                  ],
+                ),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 1.5),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.orange.withOpacity(0.8),
+                    blurRadius: 8,
+                    spreadRadius: 2,
+                  ),
+                  BoxShadow(
+                    color: Colors.white.withOpacity(0.5),
+                    blurRadius: 4,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+              child: Icon(
+                Icons.restaurant_menu,
+                size: widget.cellSize * 0.12,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 }

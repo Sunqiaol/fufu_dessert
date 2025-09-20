@@ -11,12 +11,14 @@ class MatchGameScreen extends StatefulWidget {
   final CraftableDessert dessertToCraft;
   final Function(int rewardCount) onGameComplete;
   final VoidCallback onIngredientConsume;
+  final int shopLevel;
 
   const MatchGameScreen({
     super.key,
     required this.dessertToCraft,
     required this.onGameComplete,
     required this.onIngredientConsume,
+    required this.shopLevel,
   });
 
   @override
@@ -54,23 +56,38 @@ class _MatchGameScreenState extends State<MatchGameScreen> with TickerProviderSt
   }
   
   void _calculateDifficulty() {
-    // Calculate difficulty based on dessert's ingredient levels
-    int totalIngredientLevel = 0;
-    int maxIngredientLevel = 0;
-    
-    for (int level in widget.dessertToCraft.requiredIngredients) {
-      totalIngredientLevel += level;
-      if (level > maxIngredientLevel) maxIngredientLevel = level;
+    // Progressive unlock system difficulty based on shop level
+    if (widget.shopLevel <= 3) {
+      // LEVELS 1-3: Learning Phase
+      gridSize = 4; // 4×4 only
+      gameTimeSeconds = 90; // 90 seconds (generous)
+      // Available ingredients: Only levels 1-3 (Flour, Sugar, Milk)
+    } else if (widget.shopLevel <= 5) {
+      // LEVELS 4-5: Intermediate Phase  
+      gridSize = (widget.shopLevel == 4) ? 4 : 5; // 4×4 to 5×5
+      gameTimeSeconds = (widget.shopLevel == 4) ? 90 : 75; // 75-90 seconds
+      // Available ingredients: Levels 1-4 (adds Butter)
+    } else if (widget.shopLevel <= 7) {
+      // LEVELS 6-7: Advanced Phase
+      gridSize = (widget.shopLevel == 6) ? 5 : 6; // 5×5 to 6×6
+      gameTimeSeconds = (widget.shopLevel == 6) ? 75 : 60; // 60-75 seconds  
+      // Available ingredients: Levels 1-6 (adds Chocolate, Strawberries)
+    } else if (widget.shopLevel <= 9) {
+      // LEVELS 8-9: Expert Phase
+      gridSize = (widget.shopLevel == 8) ? 6 : 7; // 6×6 to 7×7
+      gameTimeSeconds = (widget.shopLevel == 8) ? 60 : 45; // 45-60 seconds
+      // Available ingredients: Levels 1-8 (adds Vanilla, Cream)
+    } else {
+      // LEVEL 10+: Master Phase
+      gridSize = 8; // 7×7 to 8×8 (max)
+      gameTimeSeconds = 30; // 30-45 seconds (minimum)
+      // Available ingredients: All levels 1-10
     }
     
-    // Base difficulty on both total level and max level
-    int difficultyFactor = totalIngredientLevel + maxIngredientLevel;
-    
-    // Grid size increases with difficulty (4x4 to 8x8)
-    gridSize = math.min(8, math.max(4, 4 + (difficultyFactor ~/ 6)));
-    
-    // Time decreases with difficulty (120s to 45s)
-    gameTimeSeconds = math.max(45, 120 - (difficultyFactor * 5));
+    // Ensure grid size is reasonable for the number of ingredient types
+    int ingredientCount = widget.dessertToCraft.requiredIngredients.length;
+    int minGridSize = math.max(4, math.sqrt(ingredientCount * 4).ceil());
+    gridSize = math.max(gridSize, minGridSize);
     
     // Set initial time and target matches
     timeRemaining = gameTimeSeconds;
@@ -90,10 +107,30 @@ class _MatchGameScreenState extends State<MatchGameScreen> with TickerProviderSt
     // Get ingredients from the dessert recipe
     availableIngredients = List<int>.from(widget.dessertToCraft.requiredIngredients);
     
+    // Determine maximum ingredient level based on shop level (progressive unlock)
+    int maxIngredientLevel;
+    if (widget.shopLevel <= 3) {
+      maxIngredientLevel = 3; // Only Flour, Sugar, Milk
+    } else if (widget.shopLevel <= 5) {
+      maxIngredientLevel = 4; // Adds Butter
+    } else if (widget.shopLevel <= 7) {
+      maxIngredientLevel = 6; // Adds Chocolate, Strawberries
+    } else if (widget.shopLevel <= 9) {
+      maxIngredientLevel = 8; // Adds Vanilla, Cream
+    } else {
+      maxIngredientLevel = 10; // All ingredients
+    }
+    
     // Add more variety if needed (minimum 4 different types for good gameplay)
     while (availableIngredients.length < 4) {
-      availableIngredients.add(Random().nextInt(5) + 1); // Add random levels 1-5
+      int newIngredient = Random().nextInt(maxIngredientLevel) + 1;
+      if (!availableIngredients.contains(newIngredient)) {
+        availableIngredients.add(newIngredient);
+      }
     }
+    
+    // Remove any ingredients that exceed the shop level restriction
+    availableIngredients = availableIngredients.where((level) => level <= maxIngredientLevel).toList();
     
     // Initialize grid with pairs of ingredients
     gameGrid = List.generate(gridSize, (i) => List.generate(gridSize, (j) => null));
@@ -362,48 +399,41 @@ class _MatchGameScreenState extends State<MatchGameScreen> with TickerProviderSt
     // Consume ingredients first
     _consumeIngredients();
     
-    // Calculate reward based on performance (5-20x range as promised)
-    int baseReward = 5; // Minimum reward is 5x, not 1x
-    int reward = baseReward;
+    // Calculate reward based on completion percentage (fixed max multiplier of 20x)
+    const int maxReward = 20; // Fixed max multiplier
+    int reward;
     
-    // Performance-based rewards
+    // Performance-based rewards following the balanced system
     double completionRate = matches / targetMatches;
     
     if (_isGridEmpty()) {
-      // Perfect completion - maximum reward
-      reward = 20;
-    } else if (completionRate >= 0.9) {
-      // 90%+ completion
-      reward = 18;
+      // 100% Clear: Max multiplier + 25% time bonus
+      reward = maxReward;
+      if (timeRemaining > gameTimeSeconds * 0.5) { // >50% time remaining
+        reward = (reward * 1.25).round(); // +25% time bonus
+      }
     } else if (completionRate >= 0.8) {
-      // 80%+ completion
-      reward = 15;
-    } else if (completionRate >= 0.7) {
-      // 70%+ completion
-      reward = 12;
+      // 80%+ Clear: 90% of max multiplier + 15% time bonus  
+      reward = (maxReward * 0.9).round(); // 18x base
+      if (timeRemaining > gameTimeSeconds * 0.3) { // >30% time remaining
+        reward = (reward * 1.15).round(); // +15% time bonus
+      }
     } else if (completionRate >= 0.6) {
-      // 60%+ completion  
-      reward = 10;
-    } else if (completionRate >= 0.5) {
-      // 50%+ completion
-      reward = 8;
-    } else if (completionRate >= 0.3) {
-      // 30%+ completion
-      reward = 6;
+      // 60%+ Clear: 70% of max multiplier + 5% time bonus
+      reward = (maxReward * 0.7).round(); // 14x base
+      if (timeRemaining > gameTimeSeconds * 0.1) { // >10% time remaining
+        reward = (reward * 1.05).round(); // +5% time bonus
+      }
+    } else if (completionRate >= 0.4) {
+      // 40%+ Clear: 50% of max multiplier
+      reward = (maxReward * 0.5).round(); // 10x base
     } else {
-      // Less than 30% completion - minimum reward
-      reward = 5;
+      // <40% Clear: 30% of max multiplier
+      reward = (maxReward * 0.3).round(); // 6x base
     }
     
-    // Time bonus (up to 25% bonus for fast completion)
-    if (timeRemaining > 60) {
-      reward = (reward * 1.25).round(); // 25% bonus for completing with >60s left
-    } else if (timeRemaining > 30) {
-      reward = (reward * 1.15).round(); // 15% bonus for completing with >30s left
-    }
-    
-    // Ensure reward stays within 5-20x range
-    reward = reward.clamp(5, 20);
+    // Ensure reward stays within reasonable range
+    reward = reward.clamp(5, 25); // Allow slightly above 20x with time bonuses
     
     widget.onGameComplete(reward);
   }

@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:fufu_dessert2/services/audio_service.dart';
 import 'package:fufu_dessert2/providers/game_provider.dart';
+import 'package:fufu_dessert2/providers/cafe_provider.dart';
+import 'package:fufu_dessert2/providers/customer_provider.dart';
+import 'package:fufu_dessert2/services/database_service.dart';
 import 'package:fufu_dessert2/screens/tutorial_screen.dart';
+import 'package:fufu_dessert2/screens/enhanced_cafe_demo_screen.dart';
 import 'package:fufu_dessert2/utils/app_theme.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -129,6 +133,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     'Show tutorial tips again',
                     Icons.refresh,
                     () => _showResetTutorialDialog(),
+                  ),
+                  _buildListTile(
+                    'Enhanced Isometric View Demo',
+                    'View the new enhanced cafe with perfect wall alignment',
+                    Icons.view_in_ar,
+                    () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => const EnhancedCafeDemoScreen(),
+                        ),
+                      );
+                    },
                   ),
                 ]),
 
@@ -392,19 +408,65 @@ class _SettingsScreenState extends State<SettingsScreen> {
         actions: [
           TextField(
             decoration: const InputDecoration(hintText: 'Type RESET here'),
-            onSubmitted: (value) {
+            onSubmitted: (value) async {
               if (value.toUpperCase() == 'RESET') {
                 Navigator.pop(context);
-                // TODO: Implement actual reset functionality
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Game reset! Starting fresh.')),
-                );
+                await _performGameReset();
               }
             },
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _performGameReset() async {
+    try {
+      debugPrint('🔄 SettingsScreen: Starting game reset process...');
+      
+      // Get providers
+      final gameProvider = Provider.of<GameProvider>(context, listen: false);
+      final cafeProvider = Provider.of<CafeProvider>(context, listen: false);
+      final customerProvider = Provider.of<CustomerProvider>(context, listen: false);
+      debugPrint('🔄 SettingsScreen: Got all providers');
+      
+      // Clear database first
+      final db = DatabaseService();
+      debugPrint('🔄 SettingsScreen: Clearing database...');
+      await db.clearAllData();
+      debugPrint('🔄 SettingsScreen: Database cleared successfully');
+      
+      // Reset all provider states to initial values
+      debugPrint('🔄 SettingsScreen: Resetting GameProvider...');
+      await gameProvider.resetToInitialState();
+      debugPrint('🔄 SettingsScreen: GameProvider reset complete');
+      
+      debugPrint('🔄 SettingsScreen: Resetting CafeProvider...');
+      await cafeProvider.resetToInitialState();
+      debugPrint('🔄 SettingsScreen: CafeProvider reset complete');
+      
+      debugPrint('🔄 SettingsScreen: Removing all customers...');
+      customerProvider.removeAllCustomers();
+      debugPrint('🔄 SettingsScreen: All customers removed');
+      
+      debugPrint('✅ SettingsScreen: Game reset complete - showing success message');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Game completely reset! Starting fresh... 🎮✨'),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 3),
+        ),
+      );
+    } catch (e) {
+      debugPrint('❌ SettingsScreen: Error during game reset: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error resetting game: $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
   }
 
   void _showCreditsDialog() {

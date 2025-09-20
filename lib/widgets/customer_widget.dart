@@ -129,26 +129,40 @@ class CustomerWidget extends StatelessWidget {
                   ),
                 ),
               
-              // Patience indicator (when ordering)
+              
+              
+              // Time countdown until customer leaves
               if (customer.state == CustomerState.ordering || customer.state == CustomerState.waiting)
                 Positioned(
-                  top: -8,
-                  left: 0,
+                  bottom: -14,
+                  left: 6,
                   child: Container(
-                    width: 40,
-                    height: 4,
+                    padding: EdgeInsets.symmetric(horizontal: 3, vertical: 1),
                     decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                    child: FractionallySizedBox(
-                      alignment: Alignment.centerLeft,
-                      widthFactor: customer.currentPatience / customer.patience,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: _getPatienceColor(),
-                          borderRadius: BorderRadius.circular(2),
+                      color: customer.patienceColor.withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: customer.patienceColor, width: 0.8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black26,
+                          blurRadius: 1,
+                          offset: Offset(0, 0.5),
                         ),
+                      ],
+                    ),
+                    child: Text(
+                      '${customer.currentPatience}s',
+                      style: TextStyle(
+                        fontSize: 7,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                        shadows: [
+                          Shadow(
+                            color: Colors.black54,
+                            blurRadius: 1,
+                            offset: Offset(0, 0.5),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -271,12 +285,6 @@ class CustomerWidget extends StatelessWidget {
     }
   }
 
-  Color _getPatienceColor() {
-    final ratio = customer.currentPatience / customer.patience;
-    if (ratio > 0.7) return Colors.green;
-    if (ratio > 0.4) return Colors.orange;
-    return Colors.red;
-  }
   
   IconData _getStateIcon() {
     switch (customer.state) {

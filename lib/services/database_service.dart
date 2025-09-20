@@ -15,7 +15,6 @@ class DatabaseService {
     if (_database != null) {
       await _database!.close();
       _database = null;
-      print('Database connection closed');
     }
   }
 
@@ -86,7 +85,6 @@ class DatabaseService {
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    print('Upgrading database from version $oldVersion to $newVersion');
     
     if (oldVersion < 3) {
       // Handle upgrade to version 3 - Add storage column
@@ -98,17 +96,13 @@ class DatabaseService {
         if (!hasStorageColumn) {
           // Add storage column with default empty storage
           await db.execute('ALTER TABLE game_state ADD COLUMN storage TEXT DEFAULT \'{"items":{},"desserts":{}}\'');
-          print('Added storage column to game_state table');
           
           // Update existing row to have proper storage
           await db.execute('UPDATE game_state SET storage = \'{"items":{},"desserts":{}}\' WHERE storage IS NULL');
-          print('Initialized storage for existing game state');
         }
       } catch (e) {
-        print('Error during ALTER TABLE upgrade: $e');
         // If ALTER TABLE fails, we need to recreate but preserve data
         try {
-          print('Attempting to preserve data during database recreation...');
           
           // Save existing data
           final existingGameState = await db.query('game_state', limit: 1);
@@ -136,26 +130,19 @@ class DatabaseService {
               'created_at': oldState['created_at'],
               'updated_at': DateTime.now().toIso8601String(),
             });
-            print('Restored game state data');
           }
           
           // Restore grid data
           for (final gridItem in existingGrid) {
             await db.insert('dessert_grid', gridItem);
           }
-          if (existingGrid.isNotEmpty) {
-            print('Restored ${existingGrid.length} grid items');
-          }
           
           // Restore cafe data if exists
           if (existingCafe.isNotEmpty) {
             await db.insert('cafe_state', existingCafe.first);
-            print('Restored cafe state data');
           }
           
-          print('Database recreation with data preservation completed');
         } catch (recreateError) {
-          print('Error recreating database: $recreateError');
           // Last resort: just create clean database
           await _onCreate(db, newVersion);
         }
@@ -166,23 +153,25 @@ class DatabaseService {
   Future<void> saveGameState(Map<String, dynamic> gameState) async {
     final db = await database;
     
-    // Convert camelCase to snake_case for database
-    final dbGameState = <String, dynamic>{
-      'coins': gameState['coins'],
-      'score': gameState['score'],
-      'shop_level': gameState['shopLevel'], // Convert camelCase to snake_case
-      'next_dessert_id': gameState['nextDessertId'], // Convert camelCase to snake_case
-      'storage': gameState['storage'] != null ? 
-          jsonEncode(gameState['storage']) : '{"items":{},"desserts":{}}',
-      'updated_at': DateTime.now().toIso8601String(),
-    };
-    
-    await db.update(
-      'game_state',
-      dbGameState,
-      where: 'id = ?',
-      whereArgs: [1],
-    );
+    await db.transaction((txn) async {
+      // Convert camelCase to snake_case for database
+      final dbGameState = <String, dynamic>{
+        'coins': gameState['coins'],
+        'score': gameState['score'],
+        'shop_level': gameState['shopLevel'], // Convert camelCase to snake_case
+        'next_dessert_id': gameState['nextDessertId'], // Convert camelCase to snake_case
+        'storage': gameState['storage'] != null ? 
+            jsonEncode(gameState['storage']) : '{"items":{},"desserts":{}}',
+        'updated_at': DateTime.now().toIso8601String(),
+      };
+      
+      await txn.update(
+        'game_state',
+        dbGameState,
+        where: 'id = ?',
+        whereArgs: [1],
+      );
+    });
   }
 
   Future<Map<String, dynamic>?> loadGameState() async {
@@ -209,7 +198,6 @@ class DatabaseService {
             storage = {"items": {}, "desserts": {}};
           }
         } catch (e) {
-          print('Error parsing storage JSON: $e');
           storage = {"items": {}, "desserts": {}};
         }
       } else {
@@ -231,24 +219,30 @@ class DatabaseService {
   Future<void> saveDessertGrid(List<List<GridDessert?>> grid) async {
     final db = await database;
     
-    // Clear existing grid
-    await db.delete('dessert_grid');
-    
-    // Save current grid
-    for (int y = 0; y < grid.length; y++) {
-      for (int x = 0; x < grid[y].length; x++) {
-        final dessert = grid[y][x];
-        if (dessert != null) {
-          await db.insert('dessert_grid', {
-            'grid_x': x,
-            'grid_y': y,
-            'dessert_level': dessert.dessert.level,
-            'dessert_id': dessert.id,
-            'created_at': DateTime.now().toIso8601String(),
-          });
+    await db.transaction((txn) async {
+      // Clear existing grid
+      await txn.delete('dessert_grid');
+      
+      // Save current grid using batch operations for better performance
+      final batch = txn.batch();
+      
+      for (int y = 0; y < grid.length; y++) {
+        for (int x = 0; x < grid[y].length; x++) {
+          final dessert = grid[y][x];
+          if (dessert != null) {
+            batch.insert('dessert_grid', {
+              'grid_x': x,
+              'grid_y': y,
+              'dessert_level': dessert.dessert.level,
+              'dessert_id': dessert.id,
+              'created_at': DateTime.now().toIso8601String(),
+            });
+          }
         }
       }
-    }
+      
+      await batch.commit();
+    });
   }
 
   Future<List<List<GridDessert?>>?> loadDessertGrid() async {
@@ -279,8 +273,6 @@ class DatabaseService {
           gridX: x,
           gridY: y,
         );
-      } else {
-        print('Skipping dessert at invalid position ($x, $y) - outside new grid bounds (7x10)');
       }
     }
     
@@ -290,25 +282,27 @@ class DatabaseService {
   Future<void> saveCafeState(Map<String, dynamic> cafeState) async {
     final db = await database;
     
-    final existingState = await db.query('cafe_state', where: 'id = ?', whereArgs: [1]);
-    
-    if (existingState.isNotEmpty) {
-      await db.update(
-        'cafe_state',
-        {
+    await db.transaction((txn) async {
+      final existingState = await txn.query('cafe_state', where: 'id = ?', whereArgs: [1]);
+      
+      if (existingState.isNotEmpty) {
+        await txn.update(
+          'cafe_state',
+          {
+            'data': jsonEncode(cafeState),
+            'updated_at': DateTime.now().toIso8601String(),
+          },
+          where: 'id = ?',
+          whereArgs: [1],
+        );
+      } else {
+        await txn.insert('cafe_state', {
+          'id': 1,
           'data': jsonEncode(cafeState),
           'updated_at': DateTime.now().toIso8601String(),
-        },
-        where: 'id = ?',
-        whereArgs: [1],
-      );
-    } else {
-      await db.insert('cafe_state', {
-        'id': 1,
-        'data': jsonEncode(cafeState),
-        'updated_at': DateTime.now().toIso8601String(),
-      });
-    }
+        });
+      }
+    });
   }
 
   Future<Map<String, dynamic>?> loadCafeState() async {
@@ -331,21 +325,62 @@ class DatabaseService {
   Future<void> clearAllData() async {
     final db = await database;
     
-    // Clear all tables completely
-    await db.delete('game_state');
-    await db.delete('dessert_grid');
-    await db.delete('cafe_state');
+    await db.transaction((txn) async {
+      // Clear all tables completely
+      await txn.delete('game_state');
+      await txn.delete('dessert_grid');
+      await txn.delete('cafe_state');
+      
+      // Reset to initial state with fresh values
+      await txn.insert('game_state', {
+        'id': 1,
+        'coins': 100,
+        'score': 0,
+        'shop_level': 1,
+        'next_dessert_id': 1,
+        'storage': '{"items":{},"desserts":{}}',
+        'created_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+      });
+    });
+  }
+
+  // Furniture positions persistence
+  Future<void> saveFurniturePositions(List<Map<String, dynamic>> furnitureData) async {
+    final db = await database;
     
-    // Reset to initial state with fresh values
-    await db.insert('game_state', {
-      'id': 1,
-      'coins': 100,
-      'score': 0,
-      'shop_level': 1,
-      'next_dessert_id': 1,
-      'created_at': DateTime.now().toIso8601String(),
+    final furnitureJson = jsonEncode({
+      'furniture': furnitureData,
       'updated_at': DateTime.now().toIso8601String(),
     });
+    
+    await db.execute('''
+      INSERT OR REPLACE INTO cafe_state (id, data, updated_at)
+      VALUES (?, ?, ?)
+    ''', [1, furnitureJson, DateTime.now().toIso8601String()]);
+  }
+  
+  Future<List<Map<String, dynamic>>?> loadFurniturePositions() async {
+    final db = await database;
+    
+    final result = await db.query(
+      'cafe_state',
+      where: 'id = ?',
+      whereArgs: [1],
+    );
+    
+    if (result.isNotEmpty) {
+      try {
+        final data = jsonDecode(result.first['data'] as String);
+        if (data['furniture'] != null) {
+          return List<Map<String, dynamic>>.from(data['furniture']);
+        }
+      } catch (e) {
+        // Error loading furniture positions - return null
+      }
+    }
+    
+    return null;
   }
 
   // Method to completely reset database (for debugging/development)

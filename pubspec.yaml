@@ -33,7 +33,7 @@ dependencies:
 
   # UI and Animation
   cupertino_icons: ^1.0.8
-  rive: ^0.13.1
+  # rive: ^0.13.1  # Temporarily disabled due to Android build issue
   
   # State Management
   provider: ^6.1.2
@@ -49,6 +49,9 @@ dependencies:
   
   # Audio
   audioplayers: ^6.0.0
+  
+  # Game Engine
+  flame: ^1.15.0
 
 dev_dependencies:
   flutter_test:
@@ -74,6 +77,10 @@ flutter:
 
   assets:
     - assets/images/
+    - assets/images/characters/
+    - assets/images/funiture/
+    - assets/walls/
+    - assets/floor/
     - assets/animations/
     - assets/audio/
 

@@ -8,11 +8,10 @@ import 'package:fufu_dessert2/models/furniture.dart';
 import 'package:fufu_dessert2/models/customer.dart';
 import 'package:fufu_dessert2/models/craftable_dessert.dart';
 import 'package:fufu_dessert2/widgets/merge_grid_widget.dart';
-import 'package:fufu_dessert2/widgets/cafe_view_widget.dart';
-import 'package:fufu_dessert2/widgets/ui_overlay_widget.dart';
-import 'package:fufu_dessert2/screens/storage_screen.dart';
 import 'package:fufu_dessert2/screens/crafting_screen.dart';
 import 'package:fufu_dessert2/screens/tutorial_screen.dart';
+import 'package:fufu_dessert2/screens/empty_view_screen.dart';
+import 'package:fufu_dessert2/screens/isometric_cafe_view.dart';
 import 'package:fufu_dessert2/services/tutorial_service.dart';
 import 'package:fufu_dessert2/services/audio_service.dart';
 import 'package:fufu_dessert2/utils/app_theme.dart';
@@ -26,20 +25,16 @@ class GameScreen extends StatefulWidget {
 }
 
 class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
-  late TabController _tabController;
   late AnimationController _storageHintController;
   late Animation<double> _storageHintAnimation;
-  
+
   // Track ingredients dropped on each customer for auto-crafting
   Map<String, List<int>> _customerIngredients = {};
 
   @override
   void initState() {
     super.initState();
-    
-    // Initialize tab controller
-    _tabController = TabController(length: 2, vsync: this);
-    
+
     // Initialize storage hint animation
     _storageHintController = AnimationController(
       duration: const Duration(milliseconds: 1500),
@@ -74,6 +69,20 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         customerProvider.updateShopLevel(newLevel);
       };
       
+      // Initialize customer provider with current game level
+      customerProvider.updateShopLevel(gameProvider.shopLevel);
+      
+      // Fallback sync mechanism - CustomerProvider can check GameProvider's actual level
+      customerProvider.getCurrentShopLevelCallback = () => gameProvider.shopLevel;
+      
+      // Connect store open/close state
+      customerProvider.getIsStoreOpenCallback = () => gameProvider.isStoreOpen;
+      
+      // Connect customer timeout penalty system
+      customerProvider.onCustomerTimeoutCallback = (patienceRemaining) {
+        gameProvider.applyCustomerTimeoutPenalty(patienceRemaining);
+      };
+      
       // Connect furniture attraction and seating capacity to customer system with null safety
       customerProvider.getFurnitureAttraction = () {
         try {
@@ -100,6 +109,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         }
       };
       
+      // Connect seating capacity change notifications
+      cafeProvider.onSeatingCapacityChanged = () {
+        customerProvider.updateSeatingCapacity();
+      };
+      
       // Connect merged dessert serving from storage
       customerProvider.serveDessertCallback = (int dessertLevel) {
         try {
@@ -120,8 +134,28 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         }
       };
       
+      // Connect storage availability checks for auto-feeding crafted desserts only
+      customerProvider.hasStorageCraftedItemCallback = (int dessertId) {
+        try {
+          return gameProvider.storage.hasCraftedDessert(dessertId);
+        } catch (e) {
+          debugPrint('Error checking storage for crafted dessert $dessertId: $e');
+          return false;
+        }
+      };
+      
       // Initialize customer provider with current shop level
       customerProvider.updateShopLevel(gameProvider.shopLevel);
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Set context for GameProvider once after widget is built
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final gameProvider = Provider.of<GameProvider>(context, listen: false);
+      gameProvider.setContext(context);
     });
   }
   
@@ -129,9 +163,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     try {
       final audioService = AudioService();
       await audioService.playBackgroundMusic();
-      print('🎵 Started background music!');
     } catch (e) {
-      print('Could not start background music: $e');
     }
   }
 
@@ -140,7 +172,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     await Future.delayed(const Duration(milliseconds: 1000));
     
     if (mounted) {
-      final hasSeenTutorial = await TutorialService.hasSeenTutorial();
+      final hasSeenTutorial = false; // Always show first time tutorial
       if (!hasSeenTutorial && mounted) {
         _showFirstTimeTutorialDialog();
       }
@@ -187,14 +219,14 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           actions: [
             TextButton(
               onPressed: () async {
-                await TutorialService.markTutorialAsSeen();
+                // Tutorial marked as seen
                 Navigator.of(context).pop();
               },
               child: const Text('Skip Tutorial'),
             ),
             ElevatedButton(
               onPressed: () async {
-                await TutorialService.markTutorialAsSeen();
+                // Tutorial marked as seen
                 Navigator.of(context).pop();
                 Navigator.of(context).push(
                   MaterialPageRoute(
@@ -216,7 +248,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
-    _tabController.dispose();
     _storageHintController.dispose();
     super.dispose();
   }
@@ -245,12 +276,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
               child: _buildCurrencyLevelBar(context),
             ),
             
-            // Floating Orders Display - 10% of screen height
+            // Floating Orders Display - 11% of screen height (compact but functional)
             Container(
-              height: MediaQuery.of(context).size.height * 0.10, // Reduced to 10%
+              height: MediaQuery.of(context).size.height * 0.11, // Reduced to 11% to not block board
               margin: EdgeInsets.symmetric(
                 horizontal: AppTheme.responsiveMargin(context), 
-                vertical: AppTheme.responsiveSpacing(context, base: 6)
+                vertical: AppTheme.responsiveSpacing(context, base: 3)
               ),
               child: Consumer2<CustomerProvider, GameProvider>(
                 builder: (context, customerProvider, gameProvider, child) {
@@ -267,95 +298,128 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             
             // Main Content
             Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  // Merge Grid Tab
-                  Container(
-                    padding: EdgeInsets.fromLTRB(
-                      AppTheme.responsiveMargin(context),
-                      AppTheme.responsiveSpacing(context), 
-                      AppTheme.responsiveMargin(context), 
-                      AppTheme.responsiveSpacing(context, base: 4)
-                    ), // Responsive spacing system
-                    child: Column(
-                      children: [
-                        // Grid - takes most space
-                        Expanded(
-                          flex: 8,
-                          child: const MergeGridWidget(),
-                        ),
-                        
-                        // Bottom controls area - compressed height
-                        Flexible(
-                          flex: 1,
-                          child: SingleChildScrollView(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                // Craft Button
-                                Container(
-                                  padding: EdgeInsets.fromLTRB(
-                                    AppTheme.responsiveMargin(context),
-                                    AppTheme.responsiveSpacing(context), 
-                                    AppTheme.responsiveMargin(context), 
-                                    AppTheme.responsiveSpacing(context, base: 4)
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: CuteButton(
-                                          text: 'Craft',
-                                          icon: Icons.construction,
-                                          gradient: const LinearGradient(colors: [Color(0xFF7E57C2), Color(0xFF5E35B1)]),
-                                          onPressed: () {
-                                            AudioService().playSoundEffect(SoundEffect.buttonPress);
-                                            Navigator.of(context).push(
-                                              MaterialPageRoute(
-                                                builder: (context) => const CraftingScreen(),
-                                              ),
-                                            );
-                                          },
-                                          height: AppTheme.responsiveButtonHeight(context),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                
-                                // Selection Info
-                                Consumer<GameProvider>(
-                                  builder: (context, gameProvider, child) {
-                                    if (gameProvider.isSellMode) {
-                                      return Container(
-                                        padding: EdgeInsets.fromLTRB(
-                                          AppTheme.responsiveMargin(context),
-                                          AppTheme.responsiveSpacing(context, base: 4),
-                                          AppTheme.responsiveMargin(context), 
-                                          AppTheme.responsiveSpacing(context)
-                                        ), // Responsive spacing
-                                        child: const Text(
-                                          '💰 Select ingredients to store!',
-                                          style: TextStyle(fontSize: 10, color: Colors.green),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      );
-                                    }
-                                    
-                                    return const SizedBox.shrink();
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
+              child: Container(
+                padding: EdgeInsets.fromLTRB(
+                  AppTheme.responsiveMargin(context),
+                  AppTheme.responsiveSpacing(context),
+                  AppTheme.responsiveMargin(context),
+                  AppTheme.responsiveSpacing(context, base: 4)
+                ), // Responsive spacing system
+                child: Column(
+                  children: [
+                    // Grid - takes most space
+                    Expanded(
+                      flex: 8,
+                      child: const MergeGridWidget(),
                     ),
-                  ),
-                  
-                  // Café Tab
-                  const CafeViewWidget(),
-                ],
+
+                    // Bottom controls area - compressed height
+                    Flexible(
+                      flex: 1,
+                      child: SingleChildScrollView(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Craft Button - Full Width
+                            Container(
+                              padding: EdgeInsets.fromLTRB(
+                                AppTheme.responsiveMargin(context),
+                                AppTheme.responsiveSpacing(context),
+                                AppTheme.responsiveMargin(context),
+                                AppTheme.responsiveSpacing(context, base: 4)
+                              ),
+                              child: CuteButton(
+                                text: 'Craft',
+                                icon: Icons.construction,
+                                gradient: const LinearGradient(colors: [Color(0xFF7E57C2), Color(0xFF5E35B1)]),
+                                onPressed: () {
+                                  AudioService().playSoundEffect(SoundEffect.buttonPress);
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (context) => const CraftingScreen(),
+                                    ),
+                                  );
+                                },
+                                height: AppTheme.responsiveButtonHeight(context),
+                              ),
+                            ),
+
+                            // Empty View Button
+                            Container(
+                              padding: EdgeInsets.fromLTRB(
+                                AppTheme.responsiveMargin(context),
+                                AppTheme.responsiveSpacing(context),
+                                AppTheme.responsiveMargin(context),
+                                AppTheme.responsiveSpacing(context, base: 4)
+                              ),
+                              child: CuteButton(
+                                text: 'Empty View',
+                                icon: Icons.visibility,
+                                gradient: const LinearGradient(colors: [Color(0xFF42A5F5), Color(0xFF1976D2)]),
+                                onPressed: () {
+                                  AudioService().playSoundEffect(SoundEffect.buttonPress);
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (context) => const EmptyViewScreen(),
+                                    ),
+                                  );
+                                },
+                                height: AppTheme.responsiveButtonHeight(context),
+                              ),
+                            ),
+
+                            // Cafe View Button
+                            Container(
+                              padding: EdgeInsets.fromLTRB(
+                                AppTheme.responsiveMargin(context),
+                                AppTheme.responsiveSpacing(context),
+                                AppTheme.responsiveMargin(context),
+                                AppTheme.responsiveSpacing(context, base: 4)
+                              ),
+                              child: CuteButton(
+                                text: 'Cafe View',
+                                icon: Icons.store,
+                                gradient: const LinearGradient(colors: [Color(0xFF8BC34A), Color(0xFF4CAF50)]),
+                                onPressed: () {
+                                  AudioService().playSoundEffect(SoundEffect.buttonPress);
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (context) => const IsometricCafeView(),
+                                    ),
+                                  );
+                                },
+                                height: AppTheme.responsiveButtonHeight(context),
+                              ),
+                            ),
+
+                            // Selection Info
+                            Consumer<GameProvider>(
+                              builder: (context, gameProvider, child) {
+                                if (gameProvider.isSellMode) {
+                                  return Container(
+                                    padding: EdgeInsets.fromLTRB(
+                                      AppTheme.responsiveMargin(context),
+                                      AppTheme.responsiveSpacing(context, base: 4),
+                                      AppTheme.responsiveMargin(context),
+                                      AppTheme.responsiveSpacing(context)
+                                    ), // Responsive spacing
+                                    child: const Text(
+                                      '💰 Select ingredients to store!',
+                                      style: TextStyle(fontSize: 10, color: Colors.green),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  );
+                                }
+
+                                return const SizedBox.shrink();
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
@@ -377,8 +441,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     
     // Handle grid desserts
     final draggedLevel = dragData['level'] as int;
-    final x = dragData['x'] as int;
-    final y = dragData['y'] as int;
     
     // Initialize customer ingredient list if not exists
     _customerIngredients[customer.id] ??= [];
@@ -520,8 +582,10 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     final x = dragData['x'] as int;
     final y = dragData['y'] as int;
     
+    
     // Add ingredient to this customer's collection
     _customerIngredients[customer.id]!.add(draggedLevel);
+    
     
     // Remove the item from the grid and add new random item
     gameProvider.grid[y][x] = null;
@@ -560,6 +624,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   }
 
   bool _hasAllIngredients(List<int> collectedIngredients, List<int> requiredIngredients) {
+    
     // Create a copy of required ingredients to track what we still need
     List<int> remainingRequired = List.from(requiredIngredients);
     
@@ -567,6 +632,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     for (int ingredient in collectedIngredients) {
       remainingRequired.remove(ingredient);
     }
+    
     
     // If no ingredients remain, we have everything
     return remainingRequired.isEmpty;
@@ -604,8 +670,10 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       }
     }
     
+    
     // Now craft the dessert (this will remove ingredients from grid)
     final success = gameProvider.craftDessert(craftableDessert.id);
+    
     
     if (success) {
       // Try to serve the crafted dessert
@@ -711,12 +779,15 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           Expanded(
             flex: 4,
             child: Consumer<GameProvider>(
-              builder: (context, gameProvider, child) => _buildLevelProgress(
-                context,
-                gameProvider.shopLevel,
-                gameProvider.getShopExperience(), 
-                gameProvider.getRequiredExperience()
-              ),
+              builder: (context, gameProvider, child) {
+                return _buildLevelProgress(
+                  context,
+                  gameProvider,
+                  gameProvider.shopLevel,
+                  gameProvider.getShopExperience(), 
+                  gameProvider.getRequiredExperience()
+                );
+              },
             ),
           ),
           
@@ -730,6 +801,63 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                 '${customerProvider.customers.length}/${customerProvider.maxCustomers}',
                 Colors.pink,
                 'Customers'
+              ),
+            ),
+          ),
+          
+          // Store Open/Close Toggle
+          Expanded(
+            flex: 3,
+            child: Consumer<GameProvider>(
+              builder: (context, gameProvider, child) => Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: gameProvider.canToggleStore ? gameProvider.toggleStore : null,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    width: double.infinity,
+                    height: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: gameProvider.isStoreOpen 
+                          ? [Colors.green.shade600, Colors.green.shade800]
+                          : [Colors.red.shade600, Colors.red.shade800],
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: gameProvider.canToggleStore ? Colors.white : Colors.grey,
+                        width: gameProvider.canToggleStore ? 2 : 1,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: (gameProvider.isStoreOpen ? Colors.green : Colors.red).withValues(alpha: gameProvider.canToggleStore ? 0.6 : 0.3),
+                          blurRadius: gameProvider.canToggleStore ? 8 : 4,
+                          spreadRadius: gameProvider.canToggleStore ? 2 : 1,
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          gameProvider.isStoreOpen ? Icons.store : Icons.lock,
+                          color: gameProvider.canToggleStore ? Colors.white : Colors.grey.shade300,
+                          size: 18,
+                        ),
+                        const SizedBox(height: 1),
+                        Text(
+                          gameProvider.isStoreOpen ? 'OPEN' : 'CLOSED',
+                          style: TextStyle(
+                            color: gameProvider.canToggleStore ? Colors.white : Colors.grey.shade300,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 8,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
@@ -772,10 +900,13 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildLevelProgress(BuildContext context, int level, int currentExp, int requiredExp) {
+  Widget _buildLevelProgress(BuildContext context, GameProvider gameProvider, int level, int currentExp, int requiredExp) {
+    // Normal level progress display
     double progress = requiredExp > 0 ? currentExp / requiredExp : 0.0;
     
-    return Container(
+    return GestureDetector(
+      onTap: () => _showXpProgressDialog(context, gameProvider),
+      child: Container(
       padding: EdgeInsets.symmetric(
         horizontal: AppTheme.responsivePadding(context, small: 6, large: 8), 
         vertical: AppTheme.responsivePadding(context, small: 4, large: 6)
@@ -821,8 +952,96 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           ),
         ],
       ),
+      ),
     );
   }
 
+  void _showXpProgressDialog(BuildContext context, GameProvider gameProvider) {
+    final currentXp = gameProvider.getShopExperience();
+    final requiredXp = gameProvider.getRequiredExperience();
+    final progress = requiredXp > 0 ? currentXp / requiredXp : 1.0;
+    final isMaxLevel = gameProvider.shopLevel >= gameProvider.levelRequirements.length;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.store, color: Colors.blue, size: 24),
+              const SizedBox(width: 8),
+              Text(
+                'Café Level ${gameProvider.shopLevel}',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (isMaxLevel) ...[
+                const Text(
+                  '🎉 Maximum Level Reached!',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.orange),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Total Experience: ${gameProvider.score}',
+                  style: const TextStyle(fontSize: 14, color: Colors.blue),
+                ),
+              ] else ...[
+                Text(
+                  'Progress to Level ${gameProvider.shopLevel + 1}',
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: LinearProgressIndicator(
+                      value: progress,
+                      backgroundColor: Colors.transparent,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.blue),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'XP: $currentXp / $requiredXp',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${(progress * 100).toStringAsFixed(1)}% complete',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  '💡 Earn XP by:',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 4),
+                const Text('• Serving customers (3x coins earned)', style: TextStyle(fontSize: 12)),
+                const Text('• Merging desserts (1.5x dessert value)', style: TextStyle(fontSize: 12)),
+                const Text('• Crafting desserts (2x dessert value)', style: TextStyle(fontSize: 12)),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
 }

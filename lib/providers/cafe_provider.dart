@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:fufu_dessert2/models/furniture.dart';
 import 'package:fufu_dessert2/services/database_service.dart';
@@ -39,6 +40,12 @@ class CafeProvider with ChangeNotifier {
   int? get previewWidth => _previewWidth;
   int? get previewHeight => _previewHeight;
   bool get previewValid => _previewValid;
+  
+  // Callback for when seating capacity changes
+  VoidCallback? onSeatingCapacityChanged;
+  
+  // MEMORY OPTIMIZATION: Debounce capacity change notifications
+  Timer? _capacityChangeTimer;
   
   // Calculate total attraction bonus from all placed furniture
   int get totalAttractionBonus {
@@ -82,16 +89,38 @@ class CafeProvider with ChangeNotifier {
     _initializeCafe();
   }
   
+  // MEMORY OPTIMIZATION: Debounced capacity change notification
+  void _notifySeatingCapacityChanged() {
+    _capacityChangeTimer?.cancel();
+    _capacityChangeTimer = Timer(const Duration(milliseconds: 500), () {
+      _notifySeatingCapacityChanged();
+    });
+  }
+  
   void _initializeCafe() async {
     await loadCafeState();
     if (_placedFurniture.isEmpty) {
       _placeDefaultFurniture();
     }
-    _rebuildGrid();
+
+    // TEMPORARY FIX: Reset furniture positions if they got corrupted
+    // Remove this after furniture positions are fixed
+    // resetFurniturePositions(); // Fixed - furniture positions restored
+
+    // IMPORTANT: Always ensure door wall exists AFTER loading saved state
+    // This must come after loadCafeState() to prevent saved data from overwriting the wall
+    _ensureDoorWallExists();
+
+    // Align all furniture to grid positions for proper placement
+    // _alignFurnitureToGrid(); // Temporarily disabled to fix coordinate issues
+
+    _rebuildGrid(); // Rebuild grid after ensuring wall exists
+    saveCafeState(); // Save the state with the wall included
   }
   
   void _placeDefaultFurniture() {
-    // Place default furniture - cash register, display case, and 2 four-person tables
+    // Place default furniture - cash register, display case, and 2 two-person tables (4 total seats)
+    // Use grid-aligned positions for proper placement within cafe boundary
     try {
       final cashRegister = Furniture.furnitureItems.firstWhere(
         (f) => f.type == FurnitureType.cashRegister,
@@ -101,61 +130,229 @@ class CafeProvider with ChangeNotifier {
         (f) => f.type == FurnitureType.displayCase,
         orElse: () => Furniture.furnitureItems.first,
       );
-      final table4Seat = Furniture.furnitureItems.firstWhere(
-        (f) => f.id == 'table_4_seat',
+      final table2Seat = Furniture.furnitureItems.firstWhere(
+        (f) => f.id == 'table_2_seat',
         orElse: () => Furniture.furnitureItems.firstWhere(
-          (f) => f.type == FurnitureType.table,
+          (f) => f.type == FurnitureType.table && f.seatingCapacity == 2,
+          orElse: () => Furniture.furnitureItems.firstWhere(
+            (f) => f.type == FurnitureType.table,
+            orElse: () => Furniture.furnitureItems.first,
+          ),
+        ),
+      );
+      final doorWall = Furniture.furnitureItems.firstWhere(
+        (f) => f.id == 'door_wall',
+        orElse: () => Furniture.furnitureItems.first,
+      );
+      final plant = Furniture.furnitureItems.firstWhere(
+        (f) => f.id == 'plant_1',
+        orElse: () => Furniture.furnitureItems.firstWhere(
+          (f) => f.type == FurnitureType.plant,
           orElse: () => Furniture.furnitureItems.first,
         ),
       );
-      
+      final menu = Furniture.furnitureItems.firstWhere(
+        (f) => f.id == 'menu_board',
+        orElse: () => Furniture.furnitureItems.firstWhere(
+          (f) => f.name.toLowerCase().contains('menu'),
+          orElse: () => Furniture.furnitureItems.first,
+        ),
+      );
+
       final defaultItems = [
+        // Door wall at edge of grid
+        PlacedFurniture(
+          id: 'default_door_wall',
+          furniture: doorWall,
+          x: 5.0, // Left edge of visible grid
+          y: 5.0, // Top edge of visible grid
+        ),
         PlacedFurniture(
           id: 'default_register',
           furniture: cashRegister,
-          x: 4.0, // Grid position 8
-          y: 4.0, // Grid position 8
+          x: 8.0, // Within grid range 5-17
+          y: 7.0, // Within grid range 5-15
         ),
         PlacedFurniture(
           id: 'default_display',
           furniture: displayCase,
-          x: 8.0, // Grid position 16
-          y: 4.0, // Grid position 8
+          x: 12.0, // Within grid range 5-17
+          y: 7.0, // Within grid range 5-15
         ),
-        // First 4-person table
+        // First 2-person table
         PlacedFurniture(
           id: 'default_table_1',
-          furniture: table4Seat,
-          x: 2.0, // Grid position 4
-          y: 1.5, // Grid position 3
+          furniture: table2Seat,
+          x: 7.0, // Within grid range 5-17
+          y: 10.0, // Within grid range 5-15
         ),
-        // Second 4-person table
+        // Second 2-person table
         PlacedFurniture(
           id: 'default_table_2',
-          furniture: table4Seat,
-          x: 6.0, // Grid position 12
-          y: 1.5, // Grid position 3
+          furniture: table2Seat,
+          x: 11.0, // Within grid range 5-17
+          y: 10.0, // Within grid range 5-15
+        ),
+        // Plant decoration
+        PlacedFurniture(
+          id: 'default_plant',
+          furniture: plant,
+          x: 6.0, // Within grid range 5-17
+          y: 12.0, // Within grid range 5-15
+        ),
+        // Menu board
+        PlacedFurniture(
+          id: 'default_menu',
+          furniture: menu,
+          x: 14.0, // Within grid range 5-17
+          y: 9.0, // Within grid range 5-15
         ),
       ];
-      
+
       _placedFurniture = defaultItems;
       _rebuildGrid();
       notifyListeners();
+      // Force customer provider to update max customers when default furniture is placed - IMMEDIATE
+      onSeatingCapacityChanged?.call();
     } catch (e) {
       debugPrint('Error placing default furniture: $e');
       // Fallback: create minimal furniture setup
       _placedFurniture = [];
       notifyListeners();
+      onSeatingCapacityChanged?.call();
     }
   }
   
+  // Ensure door wall is present - call this after loading saved state
+  void _ensureDoorWallExists() {
+    // Always remove and re-add door wall to ensure it's always visible with correct rotation
+    _placedFurniture.removeWhere((furniture) => furniture.id == 'default_door_wall');
+    
+    // Always add the door wall
+    {
+      try {
+        final doorWall = Furniture.furnitureItems.firstWhere(
+          (f) => f.id == 'door_wall',
+          orElse: () => Furniture.furnitureItems.first,
+        );
+        
+        final doorWallFurniture = PlacedFurniture(
+          id: 'default_door_wall',
+          furniture: doorWall,
+          x: 0.0, // Left edge
+          y: 0.0, // Top edge
+          rotation: 0.0, // No rotation - keep as default front wall
+        );
+        
+        _placedFurniture.add(doorWallFurniture);
+        notifyListeners();
+        // Force customer provider to update after adding door wall
+        _notifySeatingCapacityChanged();
+        
+        print('✅ Added door wall as default front wall (no rotation) - triggering sync');
+      } catch (e) {
+        print('❌ Error adding door wall: $e');
+      }
+    }
+  }
+
+  // Reset furniture to default positions (call this to fix corrupted coordinates)
+  void resetFurniturePositions() {
+    _placedFurniture.clear();
+    _placeDefaultFurniture();
+    saveCafeState();
+    notifyListeners();
+  }
+
+  // Align all furniture to grid positions to ensure proper placement
+  void _alignFurnitureToGrid() {
+    List<PlacedFurniture> alignedFurniture = [];
+
+    for (var furniture in _placedFurniture) {
+      // Convert world coordinates to grid coordinates
+      int gridX = (furniture.x - 5).round().clamp(0, 12);
+      int gridY = (furniture.y - 5).round().clamp(0, 10);
+
+      // Check if this position is within a reasonable cafe floor area
+      // For now, we use a simple rectangular area that should be safe
+      if (gridX >= 1 && gridX <= 10 && gridY >= 1 && gridY <= 8) {
+        // Position is within safe area, align to grid
+        final alignedX = (gridX + 5).toDouble();
+        final alignedY = (gridY + 5).toDouble();
+
+        alignedFurniture.add(PlacedFurniture(
+          id: furniture.id,
+          furniture: furniture.furniture,
+          x: alignedX,
+          y: alignedY,
+          rotation: furniture.rotation,
+        ));
+      } else {
+        // Position is outside safe area, find a safe grid position
+        Point<int>? safePos = _findSafeGridPosition(gridX, gridY);
+        if (safePos != null) {
+          final safeX = (safePos.x + 5).toDouble();
+          final safeY = (safePos.y + 5).toDouble();
+
+          alignedFurniture.add(PlacedFurniture(
+            id: furniture.id,
+            furniture: furniture.furniture,
+            x: safeX,
+            y: safeY,
+            rotation: furniture.rotation,
+          ));
+        }
+        // If no safe position found, exclude this furniture
+      }
+    }
+
+    _placedFurniture = alignedFurniture;
+  }
+
+  // Find a safe grid position within the cafe floor area
+  Point<int>? _findSafeGridPosition(int startX, int startY) {
+    // Define safe area within the cafe floor
+    const safeArea = [
+      Point(2, 2), Point(3, 2), Point(4, 2), Point(5, 2), Point(6, 2), Point(7, 2), Point(8, 2),
+      Point(2, 3), Point(3, 3), Point(4, 3), Point(5, 3), Point(6, 3), Point(7, 3), Point(8, 3),
+      Point(2, 4), Point(3, 4), Point(4, 4), Point(5, 4), Point(6, 4), Point(7, 4), Point(8, 4),
+      Point(2, 5), Point(3, 5), Point(4, 5), Point(5, 5), Point(6, 5), Point(7, 5), Point(8, 5),
+      Point(2, 6), Point(3, 6), Point(4, 6), Point(5, 6), Point(6, 6), Point(7, 6), Point(8, 6),
+      Point(2, 7), Point(3, 7), Point(4, 7), Point(5, 7), Point(6, 7), Point(7, 7), Point(8, 7),
+    ];
+
+    // Find the closest safe position
+    Point<int>? closest;
+    double closestDistance = double.infinity;
+
+    for (var pos in safeArea) {
+      final distance = sqrt(pow(pos.x - startX, 2) + pow(pos.y - startY, 2));
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closest = pos;
+      }
+    }
+
+    return closest;
+  }
+
   // Rebuild the grid from furniture positions
   void _rebuildGrid() {
-    // Clear grid
-    _furnitureGrid = List.generate(
-      gridSize,
-      (i) => List.generate(gridSize, (j) => null),
-    );
+    // MEMORY OPTIMIZATION: Only clear and rebuild if necessary
+    if (_furnitureGrid.length != gridSize || 
+        (_furnitureGrid.isNotEmpty && _furnitureGrid[0].length != gridSize)) {
+      _furnitureGrid = List.generate(
+        gridSize,
+        (i) => List.generate(gridSize, (j) => null),
+      );
+    } else {
+      // Clear existing grid efficiently
+      for (int i = 0; i < gridSize; i++) {
+        for (int j = 0; j < gridSize; j++) {
+          _furnitureGrid[i][j] = null;
+        }
+      }
+    }
     
     // Place each furniture in grid
     for (final furniture in _placedFurniture) {
@@ -200,7 +397,6 @@ class CafeProvider with ChangeNotifier {
   
   // Start dragging
   void startDragging(String furnitureId) {
-    print('Starting drag for furniture: $furnitureId'); // Debug
     _isDragging = true;
     selectFurniture(furnitureId);
     notifyListeners();
@@ -210,7 +406,6 @@ class CafeProvider with ChangeNotifier {
   void updateDragPreview(double screenX, double screenY) {
     if (!_isDragging || _selectedFurniture == null) return;
     
-    print('Drag preview update: ($screenX, $screenY)'); // Debug
     
     // Convert screen position to grid coordinates
     final gridX = (screenX / cellSize).floor();
@@ -219,7 +414,6 @@ class CafeProvider with ChangeNotifier {
     final width = (_selectedFurniture!.furniture.width / 0.5).round();
     final height = (_selectedFurniture!.furniture.height / 0.5).round();
     
-    print('Grid position: ($gridX, $gridY), Size: (${width}x$height)'); // Debug
     
     _previewX = gridX;
     _previewY = gridY;
@@ -229,7 +423,6 @@ class CafeProvider with ChangeNotifier {
     // Check if position is valid
     _previewValid = _isValidPosition(gridX, gridY, width, height, _selectedFurniture!.id);
     
-    print('Preview valid: $_previewValid'); // Debug
     
     notifyListeners();
   }
@@ -279,6 +472,8 @@ class CafeProvider with ChangeNotifier {
       
       _rebuildGrid();
       saveCafeState();
+      // Force customer provider to update max customers when furniture moves
+      _notifySeatingCapacityChanged();
     }
     
     _isDragging = false;
@@ -362,6 +557,8 @@ class CafeProvider with ChangeNotifier {
       }
       
       notifyListeners();
+      // Force customer provider to update max customers when cafe state loads - IMMEDIATE
+      onSeatingCapacityChanged?.call();
     } catch (e) {
       debugPrint('Error loading cafe state: $e');
     }
@@ -378,6 +575,8 @@ class CafeProvider with ChangeNotifier {
     _rebuildGrid();
     saveCafeState();
     notifyListeners();
+    // Force customer provider to update max customers when furniture changes
+    _notifySeatingCapacityChanged();
   }
   
   // Sell furniture and return 50% of original price
@@ -392,6 +591,8 @@ class CafeProvider with ChangeNotifier {
       _rebuildGrid();
       saveCafeState();
       notifyListeners();
+      // Force customer provider to update max customers when furniture changes
+      _notifySeatingCapacityChanged();
       
       return sellPrice;
     }
@@ -407,6 +608,8 @@ class CafeProvider with ChangeNotifier {
       _rebuildGrid();
       saveCafeState();
       notifyListeners();
+      // Force customer provider to update max customers when furniture changes
+      _notifySeatingCapacityChanged();
       return true;
     }
     return false;
@@ -433,47 +636,76 @@ class CafeProvider with ChangeNotifier {
     return null;
   }
   
+  // Replace all placed furniture (used for cafe synchronization)
+  void replaceAllFurniture(List<PlacedFurniture> newFurniture) {
+    _placedFurniture = newFurniture;
+    _rebuildGrid();
+    saveCafeState();
+    notifyListeners();
+    _notifySeatingCapacityChanged();
+  }
+
   // Complete reset to initial state
   Future<void> resetToInitialState() async {
     try {
+      debugPrint('🔄 CafeProvider: Starting reset to initial state...');
+      
       // Clear all state
       _isInEditMode = false;
       _selectedFurniture = null;
       _isDragging = false;
       _clearPreview();
+      debugPrint('🔄 CafeProvider: Cleared edit mode state');
       
       // Clear furniture grid
       _furnitureGrid = List.generate(
         gridSize,
         (i) => List.generate(gridSize, (j) => null),
       );
+      debugPrint('🔄 CafeProvider: Cleared furniture grid (${gridSize}x$gridSize)');
       
       // Clear placed furniture list
       _placedFurniture.clear();
+      debugPrint('🔄 CafeProvider: Cleared placed furniture list');
       
       // Place default furniture again
       _placeDefaultFurniture();
+      debugPrint('🔄 CafeProvider: Placed default furniture (${_placedFurniture.length} items)');
       
       // Rebuild grid with default furniture
       _rebuildGrid();
+      debugPrint('🔄 CafeProvider: Rebuilt furniture grid');
       
       // Save the reset state
       await saveCafeState();
+      debugPrint('🔄 CafeProvider: Saved reset state to database');
       
       notifyListeners();
+      // Force customer provider to update max customers after reset
+      _notifySeatingCapacityChanged();
+      debugPrint('🔄 CafeProvider: Reset complete - notified listeners and updated seating capacity');
     } catch (e) {
-      debugPrint('Error resetting cafe state: $e');
+      debugPrint('❌ CafeProvider: Error resetting cafe state: $e');
       rethrow;
     }
   }
 
-  // Debug: Print grid
-  void printGrid() {
-    print('=== FURNITURE GRID ===');
-    for (int y = 0; y < gridSize; y++) {
-      final row = _furnitureGrid[y].map((cell) => cell?.substring(0, 1) ?? '.').join('');
-      print('$y: $row');
+  @override
+  void dispose() {
+    // MEMORY CLEANUP: Cancel debounce timer
+    _capacityChangeTimer?.cancel();
+    
+    // MEMORY CLEANUP: Clear collections
+    _placedFurniture.clear();
+    for (int i = 0; i < _furnitureGrid.length; i++) {
+      _furnitureGrid[i].clear();
     }
-    print('===================');
+    _furnitureGrid.clear();
+    
+    // MEMORY CLEANUP: Null callback
+    onSeatingCapacityChanged = null;
+    
+    super.dispose();
   }
+
 }

@@ -1,5 +1,4 @@
 
-import 'package:fufu_dessert2/models/craftable_dessert.dart';
 
 class StorageItem {
   final int dessertLevel;
@@ -35,6 +34,46 @@ class StorageItem {
   factory StorageItem.fromJson(Map<String, dynamic> json) {
     return StorageItem(
       dessertLevel: json['dessertLevel'] as int,
+      quantity: json['quantity'] as int,
+      addedAt: DateTime.fromMillisecondsSinceEpoch(json['addedAt'] as int),
+    );
+  }
+}
+
+class DessertStorageItem {
+  final int dessertId;
+  final int quantity;
+  final DateTime addedAt;
+
+  const DessertStorageItem({
+    required this.dessertId,
+    required this.quantity,
+    required this.addedAt,
+  });
+
+  DessertStorageItem copyWith({
+    int? dessertId,
+    int? quantity,
+    DateTime? addedAt,
+  }) {
+    return DessertStorageItem(
+      dessertId: dessertId ?? this.dessertId,
+      quantity: quantity ?? this.quantity,
+      addedAt: addedAt ?? this.addedAt,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'dessertId': dessertId,
+      'quantity': quantity,
+      'addedAt': addedAt.millisecondsSinceEpoch,
+    };
+  }
+
+  factory DessertStorageItem.fromJson(Map<String, dynamic> json) {
+    return DessertStorageItem(
+      dessertId: json['dessertId'] as int,
       quantity: json['quantity'] as int,
       addedAt: DateTime.fromMillisecondsSinceEpoch(json['addedAt'] as int),
     );
@@ -125,6 +164,11 @@ class Storage {
   // Get all available dessert IDs
   List<int> getAvailableDessertIds() {
     return _desserts.keys.toList()..sort();
+  }
+  
+  // Check if storage has a specific crafted dessert (for auto-feeding)
+  bool hasCraftedDessert(int dessertId) {
+    return _desserts.containsKey(dessertId) && _desserts[dessertId]!.quantity > 0;
   }
 
   // Clear all storage

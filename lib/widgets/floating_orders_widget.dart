@@ -26,15 +26,15 @@ class FloatingOrdersWidget extends StatelessWidget {
 
     return Container(
       padding: EdgeInsets.symmetric(
-        horizontal: AppTheme.responsiveMargin(context), 
-        vertical: AppTheme.responsiveSpacing(context)
-      ), // Responsive spacing system
+        horizontal: 4, 
+        vertical: 2
+      ), // Reduced fixed padding
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
           children: orderingCustomers.map((customer) {
             return Container(
-              margin: EdgeInsets.only(right: AppTheme.responsiveMargin(context)), // Responsive spacing between cards
+              margin: EdgeInsets.only(right: 6), // Reduced fixed margin between cards
               child: _OrderCardWidget(
                 key: ValueKey(customer.id),
                 customer: customer,
@@ -133,24 +133,25 @@ class _OrderCardWidget extends StatelessWidget {
           child: GestureDetector(
             onTap: () => onCustomerTap?.call(customer),
             child: Container(
-                width: AppTheme.responsiveCardWidth(context) * 1.5, // Increased width by 50% for better ingredient display
-                height: MediaQuery.of(context).size.height * 0.08, // Fixed height for consistent layout
-                padding: EdgeInsets.all(AppTheme.responsiveMargin(context)), // Responsive padding inside cards
+                width: AppTheme.responsiveCardWidth(context) * 1.4, // Compact width
+                height: MediaQuery.of(context).size.height * 0.10, // Reduced height to prevent overflow
+                padding: EdgeInsets.all(4), // Reduced fixed padding instead of responsive
                 decoration: _getCardDecoration(isHovering),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.start,
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  // Customer animal with thought bubble - compact left side
-                  SizedBox(
-                    width: 60, // Fixed width for consistency
+                  // Customer animal with patience indicators - compact layout
+                  Container(
+                    width: 50,
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
                           customer.emoji,
                           style: TextStyle(
-                            fontSize: AppTheme.responsiveFontSize(context, 28), // Slightly smaller for better proportion
+                            fontSize: AppTheme.responsiveFontSize(context, 20),
                             shadows: [
                               Shadow(
                                 color: Colors.black26,
@@ -160,20 +161,39 @@ class _OrderCardWidget extends StatelessWidget {
                             ],
                           ),
                         ),
-                        SizedBox(height: AppTheme.responsiveSpacing(context, base: 4)), // Responsive spacing
-                        // Heart to show they're waiting
-                        const Text(
-                          '💭',
-                          style: TextStyle(fontSize: 14),
+                        SizedBox(height: 2),
+                        // Time countdown until customer leaves
+                        Container(
+                          padding: EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: customer.patienceColor.withOpacity(0.8),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: customer.patienceColor, width: 1),
+                          ),
+                          child: Text(
+                            '${customer.currentPatience}s',
+                            style: TextStyle(
+                              fontSize: AppTheme.responsiveFontSize(context, 8),
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                              shadows: [
+                                Shadow(
+                                  color: Colors.black54,
+                                  blurRadius: 1,
+                                  offset: Offset(0, 0.5),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ],
                     ),
                   ),
                   
-                  // Vertical divider
+                  // Vertical divider - responsive height
                   Container(
                     width: 2,
-                    height: 40,
+                    height: double.infinity, // Use all available height
                     decoration: const BoxDecoration(
                       gradient: LinearGradient(
                         colors: [Color(0x4DFFB6C1), Color(0x4DFFAB91)], // Static colors for better performance
@@ -184,31 +204,39 @@ class _OrderCardWidget extends StatelessWidget {
                     ),
                   ),
                   
-                  SizedBox(width: AppTheme.responsiveMargin(context)), // Responsive spacing between customer and order details
+                  SizedBox(width: 4), // Reduced fixed spacing between customer and order details
                   
                   // Order details - optimized layout
                   Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+                    child: Container(
+                      height: double.infinity,
+                      padding: EdgeInsets.symmetric(vertical: 2),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
                         // Order header with icon and type
                         Row(
+                          mainAxisSize: MainAxisSize.min, // Prevent overflow
                           children: [
                             _OrderCardWidget._buildOrderIcon(context, customer),
-                            SizedBox(width: AppTheme.responsiveSpacing(context)), // Responsive spacing between icon and badge
+                            SizedBox(width: 2), // Even smaller fixed spacing
                             _OrderCardWidget._buildOrderType(context, customer),
                             const Spacer(),
                             // Progress indicator for crafted items
                             if (customer.orderType == OrderType.craftedDessert)
-                              _OrderCardWidget._buildProgressIndicator(context, customer, customerIngredients),
+                              Flexible(
+                                child: _OrderCardWidget._buildProgressIndicator(context, customer, customerIngredients),
+                              ),
                           ],
                         ),
-                        SizedBox(height: AppTheme.responsiveSpacing(context, base: 4)), // Responsive spacing between header and ingredients
                         // Ingredients display for crafted desserts
                         if (customer.orderType == OrderType.craftedDessert)
-                          _OrderCardWidget._buildEnhancedIngredientsDisplay(context, customer, customerIngredients),
-                      ],
+                          Flexible(
+                            child: _OrderCardWidget._buildEnhancedIngredientsDisplay(context, customer, customerIngredients),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -332,7 +360,7 @@ class _OrderCardWidget extends StatelessWidget {
     final collectedCount = (customerIngredients[customer.id] ?? []).length;
     
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1), // Reduced padding
       decoration: BoxDecoration(
         color: collectedCount == requiredCount 
             ? AppTheme.accentGreen.withOpacity(0.8)
@@ -357,7 +385,7 @@ class _OrderCardWidget extends StatelessWidget {
         child: Text(
           '$collectedCount/$requiredCount',
           style: TextStyle(
-            fontSize: AppTheme.responsiveFontSize(context, 11),
+            fontSize: AppTheme.responsiveFontSize(context, 9), // Reduced from 11 to 9
             fontWeight: FontWeight.bold,
             color: Colors.white,
           ),
@@ -387,18 +415,20 @@ class _OrderCardWidget extends StatelessWidget {
     });
     
     return SizedBox(
-      height: 24, // Fixed height to prevent overflow
+      height: 18, // Further reduced from 20 to 18 to prevent overflow
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
-        itemCount: sortedIngredients.length,
+        shrinkWrap: true,
+        physics: const ClampingScrollPhysics(),
+        itemCount: sortedIngredients.length.clamp(0, 6), // Limit to max 6 ingredients to prevent overflow
         itemBuilder: (context, index) {
           final ingredientLevel = sortedIngredients[index];
           final dessert = Dessert.getDessertByLevel(ingredientLevel);
           final isCollected = collectedIngredients.contains(ingredientLevel);
           
           return Container(
-            margin: EdgeInsets.only(right: AppTheme.responsiveSpacing(context, base: 6)), // Responsive spacing between ingredients
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            margin: EdgeInsets.only(right: 2), // Minimal spacing between ingredients
+            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 0), // Minimal padding
             decoration: BoxDecoration(
               color: isCollected 
                   ? AppTheme.accentGreen.withOpacity(0.9)
@@ -424,14 +454,14 @@ class _OrderCardWidget extends StatelessWidget {
                 Text(
                   dessert.emoji,
                   style: TextStyle(
-                    fontSize: AppTheme.responsiveFontSize(context, 14),
+                    fontSize: AppTheme.responsiveFontSize(context, 12), // Reduced from 14 to 12
                   ),
                 ),
                 if (isCollected) ...[
                   const SizedBox(width: 2),
                   Icon(
                     Icons.check_circle,
-                    size: AppTheme.responsiveFontSize(context, 12),
+                    size: AppTheme.responsiveFontSize(context, 10), // Reduced from 12 to 10
                     color: Colors.white,
                   ),
                 ],
@@ -443,61 +473,4 @@ class _OrderCardWidget extends StatelessWidget {
     );
   }
 
-  static Widget _buildIngredientsDisplay(BuildContext context, Customer customer, Map<String, List<int>> customerIngredients) {
-    if (customer.orderCraftedDessertId == null) return const SizedBox.shrink();
-    
-    final craftedDessert = CraftableDessert.getDessertById(customer.orderCraftedDessertId!);
-    if (craftedDessert == null) return const SizedBox.shrink();
-    
-    final requiredIngredients = craftedDessert.requiredIngredients;
-    final collectedIngredients = customerIngredients[customer.id] ?? [];
-    
-    return Container(
-      margin: const EdgeInsets.only(top: 4),
-      child: Wrap(
-        spacing: 2,
-        runSpacing: 2,
-        children: requiredIngredients.map((ingredientLevel) {
-          final dessert = Dessert.getDessertByLevel(ingredientLevel);
-          final isCollected = collectedIngredients.contains(ingredientLevel);
-          
-          return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2), // Increased padding
-            decoration: BoxDecoration(
-              color: isCollected 
-                  ? AppTheme.accentGreen.withOpacity(0.8)
-                  : AppTheme.primaryCream.withOpacity(0.8),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(
-                color: isCollected 
-                    ? AppTheme.accentGreen
-                    : AppTheme.primaryPink.withOpacity(0.5),
-                width: 1,
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  dessert.emoji,
-                  style: TextStyle(
-                    fontSize: AppTheme.responsiveFontSize(context, 16), // Increased from 10 to 16
-                  ),
-                ),
-                if (isCollected)
-                  Text(
-                    '✓',
-                    style: TextStyle(
-                      fontSize: AppTheme.responsiveFontSize(context, 12), // Increased from 8 to 12
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-              ],
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
 }
